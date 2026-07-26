@@ -8,7 +8,7 @@ The initial release supports Apple Silicon, macOS 14 or later, Terminal.app, iTe
 
 - Compact primary-display notch surface, response callout, and expandable live session board
 - Menu-bar status, Settings, setup, and quit controls
-- Configurable global shortcut, `⌥⌘G` by default
+- Global shortcut, `⌥⌘G`
 - Claude Code and Codex lifecycle adapters using official hooks
 - Exact Terminal.app targeting by TTY
 - Exact iTerm2 targeting by session unique ID, with TTY fallback
@@ -17,11 +17,12 @@ The initial release supports Apple Silicon, macOS 14 or later, Terminal.app, iTe
 - Allow and Deny actions for approval requests
 - Choice buttons and free-form fields for structured questions
 - Main-turn completion detection with a focused visual callout
+- File and image attachments routed as explicit local paths
 - In-memory session state only; no transcript database or prompt history
 - Authenticated Unix-domain socket with private `0600` permissions
 - Idempotent, backed-up, selectively removable agent integrations
-- Launch at Login using `SMAppService`
-- Event-driven process-exit monitoring without polling
+- Per-user launchd supervision: restart after abnormal exit, stay closed after Quit
+- Event-driven process-exit monitoring plus a cached low-frequency discovery fallback
 - Accessibility labels and keyboard-accessible native controls
 
 ## Build
@@ -64,7 +65,7 @@ Open `build/Anton.app` or the installed copy. On first launch:
 4. Install Claude Code hooks.
 5. Install Codex hooks.
 6. Start Codex and run `/hooks` once to review and trust the exact Anton hook definition.
-7. Choose whether Anton should launch at login, then finish setup.
+7. Finish setup. Anton's local supervisor starts it at login and restarts only abnormal exits.
 
 Sessions with installed hooks provide the richest live detail. Anton also discovers already-open Codex and Claude Code processes in Terminal and iTerm locally, including their current local lifecycle state where available.
 
@@ -77,9 +78,9 @@ claude
 codex
 ```
 
-Click the compact notch surface or press the configured global shortcut to open the board. Each flat session row identifies the agent, project, model, terminal, state, activity, start time, and last action when the hook exposes that information.
+Click the compact notch surface or press `⌥⌘G` to open the board. Each flat session row identifies the agent, project, model, terminal, state, activity, start time, and last action when the hook exposes that information.
 
-When a main turn finishes, Anton expands into a focused visual callout. Choose Reply to reveal that session's native editor, type or dictate, and press Enter. Anton resolves the stored Terminal TTY or iTerm unique session ID before sending, so it never targets whichever terminal happens to be focused.
+When a main turn finishes, Anton expands into a focused visual callout. Type or dictate in that session's native editor and press Enter. You can also paste an image or attach a local file. Anton resolves the stored Terminal TTY or iTerm unique session ID before sending, so it never targets whichever terminal happens to be focused.
 
 Approval and question hooks remain blocked while the card awaits a response. Anton sends only the explicit Allow, Deny, Cancel, or answer selected by the user; it does not weaken Claude Code or Codex sandbox policy.
 
@@ -93,7 +94,7 @@ Run the deterministic standalone suite:
 
 The suite exercises state transitions, visual completion signals, event privacy, agent adapters, exact terminal identity, reply and interaction routing, settings persistence, hook output schemas, configuration preservation and removal, and authenticated local IPC.
 
-The same cases are also expressed with Swift Testing under `Tests/AntonCoreTests`. On a complete Xcode installation, `Scripts/test.sh` additionally runs the standard SwiftPM test suite.
+The same cases are also expressed with Swift Testing under `Tests/GilfoyleCoreTests`. On a complete Xcode installation, `Scripts/test.sh` additionally runs the standard SwiftPM test suite.
 
 ## Privacy
 
@@ -141,9 +142,9 @@ Removing the integration does not delete backups or application preferences.
 - Run `/hooks` and verify that the user-level `~/.codex/hooks.json` entry is enabled and trusted.
 - A changed helper path changes the hook hash. Repair the integration in Settings, then review it again with `/hooks`.
 
-### Launch at Login fails
+### Anton does not restart after a crash
 
-Launch-at-login registration is most reliable when Anton is installed in `~/Applications` or `/Applications`. Install the local build with `./Scripts/install-local.sh`, reopen it from that location, and enable the toggle again.
+The supervisor is registered from the app's current location. Install the local build with `./Scripts/install-local.sh`; the script replaces any stale supervisor registration and opens the installed copy from `~/Applications`.
 
 ## Further documentation
 

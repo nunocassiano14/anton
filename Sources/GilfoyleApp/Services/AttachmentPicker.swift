@@ -18,11 +18,10 @@ enum AttachmentPicker {
         panel.canChooseDirectories = false
         panel.canCreateDirectories = false
 
-        panel.begin { response in
-            let urls = response == .OK ? panel.urls : []
-            DispatchQueue.main.async {
-                completion(urls)
-            }
-        }
+        // `begin` can fail to surface when Anton's only window is a
+        // non-activating NSPanel. A native modal loop is deterministic here
+        // and continues processing UI events while the picker is open.
+        let response = panel.runModal()
+        completion(response == .OK ? panel.urls : [])
     }
 }

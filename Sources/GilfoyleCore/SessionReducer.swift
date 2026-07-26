@@ -267,11 +267,16 @@ public enum SessionReducer {
 
     private static func preview(_ text: String?) -> String? {
         guard let text else { return nil }
-        let collapsed = text
-            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        let formatted = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .joined(separator: "\n")
+            .replacingOccurrences(of: "\n{3,}", with: "\n\n", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !collapsed.isEmpty else { return nil }
-        return String(collapsed.prefix(220))
+        guard !formatted.isEmpty else { return nil }
+        return String(formatted.prefix(8_000))
     }
 
     private static func applyNotification(

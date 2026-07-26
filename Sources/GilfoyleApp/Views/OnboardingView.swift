@@ -4,16 +4,10 @@ import SwiftUI
 struct OnboardingView: View {
     @ObservedObject var controller: AppController
     @ObservedObject private var permissionManager: PermissionManager
-    @ObservedObject private var launchManager: LaunchAtLoginManager
-    @ObservedObject private var preferences: AppPreferences
-
-    @State private var automationFailures: [String] = []
 
     init(controller: AppController) {
         self.controller = controller
         self.permissionManager = controller.permissionManager
-        self.launchManager = controller.launchAtLoginManager
-        self.preferences = controller.preferences
     }
 
     var body: some View {
@@ -24,7 +18,6 @@ struct OnboardingView: View {
                     environmentCard
                     permissionsCard
                     integrationsCard
-                    startupCard
                 }
                 .padding(.horizontal, 28)
                 .padding(.vertical, 20)
@@ -81,9 +74,9 @@ struct OnboardingView: View {
             )
             Divider()
             SetupStatusRow(
-                title: "Terminal + iTerm",
+                title: "Terminal / iTerm",
                 detail: "Exact window and tab targeting",
-                ready: controller.environment.terminalInstalled && controller.environment.iTermInstalled
+                ready: controller.environment.terminalInstalled || controller.environment.iTermInstalled
             )
         }
     }
@@ -100,15 +93,13 @@ struct OnboardingView: View {
             Divider()
             SetupActionRow(
                 title: "Terminal automation",
-                detail: automationFailures.isEmpty
+                detail: (permissionManager.automationFailures ?? []).isEmpty
                     ? "Send replies to Terminal and iTerm."
-                    : "Not granted for \(automationFailures.joined(separator: ", ")).",
-                ready: permissionManager.automationRequestAttempted && automationFailures.isEmpty,
+                    : "Not granted for \(permissionManager.automationFailures?.joined(separator: ", ") ?? "").",
+                ready: permissionManager.automationReady,
                 buttonTitle: "Request…",
                 action: {
-                    permissionManager.requestAutomation {
-                        automationFailures = $0
-                    }
+                    permissionManager.requestAutomation { _ in }
                 }
             )
         }
@@ -131,26 +122,6 @@ struct OnboardingView: View {
                 buttonTitle: controller.codexIntegration?.state == .incomplete ? "Repair" : "Install",
                 action: { controller.installIntegration(.codex) }
             )
-        }
-    }
-
-    private var startupCard: some View {
-        SetupCard(number: "04", title: "Daily use") {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Launch at login")
-                        .font(.system(size: 12.5, weight: .medium))
-                    Text("Recommended so every terminal session is discovered.")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Toggle("", isOn: $preferences.launchAtLoginPreference)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-            }
-            .padding(.horizontal, 13)
-            .frame(minHeight: 52)
         }
     }
 

@@ -7,6 +7,10 @@
 Current coverage:
 
 - Main session lifecycle and visual callout signal on main Stop
+- Codex turn identity across fast start/completion boundaries
+- Duplicate Terminal/iTerm TTY inventory reconciliation
+- Direct and Node-wrapped CLI process classification
+- Multiline Markdown response preview preservation
 - Subagent main-turn completion suppression
 - Structured question decoding
 - Sparse terminal identity merging
@@ -27,7 +31,7 @@ Current coverage:
 - Authenticated Unix-socket round trip and `0600` permissions
 - Invalid-token rejection before the application handler
 
-The same core behavior is represented in Swift Testing files under `Tests/AntonCoreTests`.
+The same core behavior is represented in Swift Testing files under `Tests/GilfoyleCoreTests`.
 
 ## Command Line Tools caveat on the target Mac
 
@@ -60,7 +64,7 @@ These checks require the built app, macOS permission dialogs, and interactive lo
 - [ ] Allow and deny one real approval
 - [ ] Answer one real structured question
 - [ ] Dictate into the native reply field with Wispr Flow
-- [x] Enable and verify Launch at Login
+- [x] Enable and verify the per-user launchd supervisor
 - [x] Observe that no TCP listener or runtime network request is created
 - [ ] Remove both integrations and compare preserved configuration
 
@@ -70,6 +74,16 @@ Do not mark a release complete until this checklist is performed on the target M
 
 The ad-hoc signed app was installed at `~/Applications/Anton.app`. A real Claude Code print-mode session completed successfully in Terminal on `/dev/ttys004`, appeared automatically, and produced the camera-safe visual callout. A real Codex exec session started in iTerm on `/dev/ttys005`; its installed hooks emitted successful `SessionStart` and `UserPromptSubmit` events before the workspace refused model execution because it had no remaining credits. The active Codex desktop session independently exercised Working, tool, Stop, and replacement-callout states.
 
-The installed process held only the private Unix socket and no TCP or UDP listener. Both the token and socket were mode `0600`. `sfltool dumpbtm` reported the app as enabled and allowed for Launch at Login.
+The installed process held only the private Unix socket and no TCP or UDP listener. Both the token and socket were mode `0600`. The per-user launchd job was loaded and running from the installed application path.
 
 Installing the final ad-hoc signature invalidated prior macOS Accessibility and Automation consent, as expected. Those user-mediated permissions, the refreshed Codex `/hooks` trust decision, exact-session focus/reply, real approval/question responses, and Wispr Flow dictation remain unchecked above.
+
+## Stability audit, 2026-07-26
+
+- Reproduced repeated `EXC_BREAKPOINT` crashes in `TerminalInventory.read()` caused by duplicate TTY dictionary keys.
+- Replaced the uniqueness precondition with deterministic last-value merging.
+- Profiled the installed process and cached PID/session metadata plus Terminal/iTerm inventory.
+- Reduced idle rendering by pausing completed/idle glyphs and lowering decorative animation cadence.
+- Ran the 29-case standalone suite and a production build without warnings.
+- Captured compact, onboarding, callout, board, and Settings states from the installed binary.
+- Completed a post-install soak with no new crash reports; CPU stayed near 4% with five live CLIs.

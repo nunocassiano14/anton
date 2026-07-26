@@ -15,13 +15,12 @@ final class LaunchAtLoginManager: ObservableObject {
         isEnabled = SMAppService.mainApp.status == .enabled
     }
 
-    func setEnabled(_ enabled: Bool) {
+    /// Anton now uses one launchd supervisor. This only removes the legacy
+    /// SMAppService registration left by older local builds.
+    func disableLegacyRegistrationIfNeeded() {
+        guard isEnabled else { return }
         do {
-            if enabled {
-                try SMAppService.mainApp.register()
-            } else {
-                try SMAppService.mainApp.unregister()
-            }
+            try SMAppService.mainApp.unregister()
             lastError = nil
         } catch {
             lastError = error.localizedDescription

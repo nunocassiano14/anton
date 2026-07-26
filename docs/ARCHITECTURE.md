@@ -25,7 +25,7 @@ Native reply editor ──► TerminalRouteResolver
 
 ## Targets
 
-### `AntonCore`
+### `GilfoyleCore`
 
 The core target has no UI dependency and contains:
 
@@ -65,12 +65,13 @@ The app uses:
 - SwiftUI for the panel, session cards, onboarding, and Settings
 - `NSStatusItem` for the menu-bar interface
 - `NSTextView` for the multiline reply editor
-- Carbon hot keys for a configurable global shortcut
+- Carbon hot keys for the `⌥⌘G` global shortcut
 - Apple Events through `osascript` for exact Terminal/iTerm handoff
-- `SMAppService` for Launch at Login
+- A per-user launchd agent for login startup and abnormal-exit recovery
 - `DispatchSourceProcess` to detect unexpected agent exit without polling
+- A cached five-second local discovery fallback for sessions opened before hooks
 
-The panel is attached to the primary display only. It remains up to 520 points wide and at least 46 points high until the user clicks it or invokes the shortcut, leaving room for the physical camera and a concise state summary. A main-turn completion opens a visual callout whose height includes the display's real top safe area. The full session board expands to at most 580×620 points while respecting the visible screen frame. Centered content is placed below `NSScreen.safeAreaInsets.top`; counters and controls stay in the safe areas beside the physical camera. Passive boards and callouts never become the key window; only an explicit Reply action can move keyboard focus to Anton.
+The panel is attached to the primary display only. It remains up to 520 points wide and at least 46 points high until the user clicks it or invokes the shortcut, leaving room for the physical camera and a concise state summary. A main-turn completion opens a visual callout whose response area grows with its real line count. The full session board expands to at most 820×780 points while respecting the visible screen frame. Centered content is placed below `NSScreen.safeAreaInsets.top`; counters and controls stay in the safe areas beside the physical camera. Passive boards and callouts never become the key window; only explicit reply or attachment actions can move keyboard focus to Anton.
 
 ## Session identity
 

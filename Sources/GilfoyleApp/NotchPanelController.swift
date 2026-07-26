@@ -146,13 +146,24 @@ final class NotchPanelController: NSWindowController {
     func restoreAfterSystemModal() {
         hiddenForSystemModal = false
         ensureOverlayVisible()
+        focusForExplicitReply()
     }
 
     /// Keep Anton visual-only: bringing its panel forward never makes it key,
     /// so users can continue typing in the foreground app uninterrupted.
     func ensureOverlayVisible() {
         guard !hiddenForSystemModal else { return }
-        (window as? NotchPanel)?.allowsKeyboardFocus = false
+        guard let panel = window as? NotchPanel else { return }
+        // Activating Anton is part of an explicit click into the reply
+        // editor. The application/workspace activation observers fire for
+        // that transition too; never let them immediately undo the user's
+        // focus. Once another app becomes key, `isKeyWindow` is false and the
+        // overlay returns to its passive, non-key behaviour.
+        if panel.allowsKeyboardFocus && panel.isKeyWindow {
+            panel.orderFrontRegardless()
+            return
+        }
+        panel.allowsKeyboardFocus = false
         window?.orderFrontRegardless()
         window?.resignKey()
     }

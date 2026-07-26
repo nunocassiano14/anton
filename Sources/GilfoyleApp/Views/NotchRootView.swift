@@ -7,6 +7,7 @@ struct NotchRootView: View {
     @ObservedObject private var store: SessionStore
     @State private var calloutReply = ""
     @State private var calloutAttachments: [URL] = []
+    @State private var isSendingCalloutReply = false
 
     init(controller: AppController) {
         self.controller = controller
@@ -35,6 +36,17 @@ struct NotchRootView: View {
         }
         .animation(.spring(response: 0.34, dampingFraction: 0.88), value: controller.isExpanded)
         .animation(.easeOut(duration: 0.18), value: controller.calloutSessionID)
+        .onChange(of: controller.calloutSessionID) { _, _ in
+            // Drafts are scoped to the callout session. Never carry text or
+            // local file paths into a different agent conversation.
+            calloutReply = ""
+            calloutAttachments = []
+            isSendingCalloutReply = false
+            controller.setCalloutHasAttachments(false)
+        }
+        .onChange(of: calloutAttachments.count) { _, count in
+            controller.setCalloutHasAttachments(count > 0)
+        }
         .overlay {
             if !controller.isExpanded {
                 Button {
@@ -138,7 +150,7 @@ struct NotchRootView: View {
                     // A short answer still deserves a stable readable area;
                     // without a minimum, SwiftUI can compress this scroll
                     // view to a few pixels when the notch changes height.
-                    .frame(minHeight: 105, maxHeight: 215)
+                    .frame(height: responsePreviewHeight(for: preview))
                     .padding(.leading, 44)
                 }
 
@@ -220,7 +232,10 @@ struct NotchRootView: View {
                 if !calloutAttachments.isEmpty {
                     HStack(spacing: 6) {
                         ForEach(calloutAttachments.indices, id: \.self) { index in
-                            attachmentTag(attachmentLabel(for: calloutAttachments[index], index: index)) {
+                            attachmentTag(
+                                attachmentLabel(for: calloutAttachments[index], index: index),
+                                icon: attachmentIcon(for: calloutAttachments[index])
+                            ) {
                                 calloutAttachments.remove(at: index)
                             }
                         }
@@ -247,17 +262,6 @@ struct NotchRootView: View {
             .help("Dismiss notification")
         }
         .contentShape(Rectangle())
-        .background {
-            GeometryReader { proxy in
-                Color.clear.preference(
-                    key: CalloutContentHeightPreferenceKey.self,
-                    value: proxy.size.height
-                )
-            }
-        }
-        .onPreferenceChange(CalloutContentHeightPreferenceKey.self) { height in
-            controller.updateMeasuredCalloutHeight(height)
-        }
         .accessibilityLabel(
             "\(session.agent.displayName) finished in \(session.projectName). Reply or open all sessions."
         )
@@ -266,8 +270,9 @@ struct NotchRootView: View {
     private func calloutTitle(for session: AgentSession) -> String {
         let agent = session.model?.trimmingCharacters(in: .whitespacesAndNewlines)
         let first = agent.flatMap { $0.isEmpty ? nil : $0 } ?? session.agent.displayName
-        let name = session.sessionName?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let label = name?.isEmpty == false ? name! : session.projectName
+        let name = session.sessionName?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let label = name.flatMap { $0.isEmpty ? nil : $0 } ?? session.projectName
         return "\(first) · \(label)"
     }
 
@@ -285,7 +290,7 @@ struct NotchRootView: View {
         guard canSendCalloutReply else { return }
         let message: String
         if !calloutAttachments.isEmpty {
-            let lead = trimmed.isEmpty ? "Please inspect this screenshot." : trimmed
+            let lead = trimmed.isEmpty ? "Please inspect the attached file." : trimmed
             let paths = calloutAttachments.enumerated()
                 .map { "\(attachmentLabel(for: $0.element, index: $0.offset)) attached locally: \($0.element.path)" }
                 .joined(separator: "\n")
@@ -293,18 +298,29 @@ struct NotchRootView: View {
         } else {
             message = trimmed
         }
-        controller.sendReply(message, to: sessionID)
-        calloutReply = ""
-        calloutAttachments = []
+        isSendingCalloutReply = true
+        controller.sendReply(message, to: sessionID) { success in
+            isSendingCalloutReply = false
+            if success {
+                calloutReply = ""
+                calloutAttachments = []
+            }
+        }
     }
 
     private var canSendCalloutReply: Bool {
-        !calloutReply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !calloutAttachments.isEmpty
+        !isSendingCalloutReply
+            && (!calloutReply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || !calloutAttachments.isEmpty)
     }
 
-    private func attachmentTag(_ label: String, remove: @escaping () -> Void) -> some View {
+    private func attachmentTag(
+        _ label: String,
+        icon: String,
+        remove: @escaping () -> Void
+    ) -> some View {
         Button(action: remove) {
-            Label(label, systemImage: "photo")
+            Label(label, systemImage: icon)
                 .font(.system(size: 10.5, weight: .medium))
                 .padding(.horizontal, 8)
                 .padding(.vertical, 5)
@@ -321,6 +337,11 @@ struct NotchRootView: View {
             return "Screenshot \(index + 1)"
         }
         return url.lastPathComponent
+    }
+
+    private func attachmentIcon(for url: URL) -> String {
+        let name = url.deletingPathExtension().lastPathComponent.lowercased()
+        return name.hasPrefix("screenshot-") || name.hasPrefix("image-") ? "photo" : "doc"
     }
 
     private func quickAction(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
@@ -343,6 +364,13 @@ struct NotchRootView: View {
         case .finished: return "Response ready"
         default: return session.currentActivity ?? session.state.displayName
         }
+    }
+
+    private func responsePreviewHeight(for preview: String) -> CGFloat {
+        let visualLines = preview.components(separatedBy: .newlines).reduce(0) { total, line in
+            total + max(1, Int(ceil(Double(line.count) / 90)))
+        }
+        return min(250, max(38, 22 + CGFloat(visualLines) * 17))
     }
 
     private var compactSessions: [AgentSession] {
@@ -490,14 +518,6 @@ struct NotchRootView: View {
     }
 }
 
-private struct CalloutContentHeightPreferenceKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
-}
-
 /// An original pixel robot for Anton. Its small hover and blinking antenna give
 /// it a living presence without adopting any third-party agent mark.
 struct AntonMark: View {
@@ -509,7 +529,7 @@ struct AntonMark: View {
     var body: some View {
         TimelineView(
             .animation(
-                minimumInterval: 1.0 / 24.0,
+                minimumInterval: 1.0 / 8.0,
                 paused: reduceMotion || !compactAnimation
             )
         ) { timeline in
@@ -663,7 +683,12 @@ struct AgentPixelGlyph: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 20.0, paused: reduceMotion)) { timeline in
+        TimelineView(
+            .animation(
+                minimumInterval: 1.0 / 8.0,
+                paused: reduceMotion || !animatesCurrentState
+            )
+        ) { timeline in
             let time = timeline.date.timeIntervalSinceReferenceDate
             let basePhase = time.truncatingRemainder(dividingBy: 1.8) / 1.8
             let phase = reduceMotion ? 0 : (basePhase + phaseOffset).truncatingRemainder(dividingBy: 1)
@@ -697,6 +722,15 @@ struct AgentPixelGlyph: View {
         }
         .shadow(color: agentColor(agent).opacity(state.needsUser ? 0.48 : 0.26), radius: state.needsUser ? 7 : 5)
         .accessibilityHidden(true)
+    }
+
+    private var animatesCurrentState: Bool {
+        switch state {
+        case .working, .needsApproval, .hasQuestion, .error:
+            return true
+        case .finished, .idle, .disconnected:
+            return false
+        }
     }
 
     private var phaseOffset: Double {

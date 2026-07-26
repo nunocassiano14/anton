@@ -233,6 +233,88 @@ runner.run("Codex local rollout state follows the latest task boundary") {
     )
 }
 
+runner.run("Codex lifecycle retains turn identity for fast completions") {
+    let data = Data(
+        """
+        {"type":"event_msg","payload":{"type":"task_started","turn_id":"old","started_at":100}}
+        {"type":"event_msg","payload":{"type":"task_complete","turn_id":"new","started_at":200}}
+        """.utf8
+    )
+    let snapshot = CodexRolloutLifecycle.snapshot(in: data)
+    try runner.require(snapshot.state == .finished, "The latest completed task must be ready")
+    try runner.require(snapshot.turnID == "new", "The latest task identity must be retained")
+    try runner.require(
+        snapshot.taskStartedAt == Date(timeIntervalSince1970: 200),
+        "The task start time must be retained"
+    )
+}
+
+runner.run("Duplicate TTY inventory rows keep the latest value") {
+    let inventory = TerminalInventoryParser.parse(
+        terminalLines: [
+            "/dev/ttys004|Old title",
+            "/dev/ttys004|Current title"
+        ],
+        iTermLines: [
+            "/dev/ttys006|old-session|Old",
+            "/dev/ttys006|current-session|Current"
+        ]
+    )
+    try runner.require(
+        inventory.terminalTitles["/dev/ttys004"] == "Current title",
+        "Duplicate Terminal TTY rows should keep the latest title"
+    )
+    try runner.require(
+        inventory.iTermSessions["/dev/ttys006"]?.identifier == "current-session",
+        "Duplicate iTerm TTY rows should keep the latest session"
+    )
+}
+
+runner.run("CLI discovery supports package-manager wrappers") {
+    try runner.require(
+        AgentProcessClassifier.agentKind(for: "/opt/homebrew/bin/codex --yolo") == .codex,
+        "A direct Codex executable must be recognized"
+    )
+    try runner.require(
+        AgentProcessClassifier.agentKind(
+            for: "/opt/homebrew/bin/node /opt/homebrew/lib/node_modules/@openai/codex/bin/codex.js"
+        ) == .codex,
+        "A Node-installed Codex executable must be recognized"
+    )
+    try runner.require(
+        AgentProcessClassifier.agentKind(
+            for: "/usr/bin/node /usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js"
+        ) == .claude,
+        "A Node-installed Claude executable must be recognized"
+    )
+    try runner.require(
+        AgentProcessClassifier.agentKind(for: "/Applications/Codex.app/Contents/MacOS/Codex") == nil,
+        "The desktop application must not masquerade as a CLI session"
+    )
+    try runner.require(
+        AgentProcessClassifier.agentKind(
+            for: "/bin/zsh -lc rg /opt/homebrew/lib/node_modules/@openai/codex/"
+        ) == nil,
+        "A shell command mentioning a package path must not become a fake agent"
+    )
+}
+
+runner.run("Response previews preserve Markdown beyond a single line") {
+    let message = "## Result\n\n- First item\n- Second item\n\n" + String(repeating: "x", count: 400)
+    let reduction = SessionReducer.reduce(
+        existing: nil,
+        request: request(agent: .codex, event: "Stop", assistantMessage: message)
+    )
+    try runner.require(
+        reduction.session.lastResponsePreview?.contains("## Result\n\n- First item") == true,
+        "Markdown structure must survive the hook reducer"
+    )
+    try runner.require(
+        (reduction.session.lastResponsePreview?.count ?? 0) > 220,
+        "Useful response text must not be clipped to the old 220-character limit"
+    )
+}
+
 runner.run("Claude explicit model changes supersede older model metadata") {
     let fixture = Data(
         "{\"model\":\"claude-fable-5\"}\nSet model to **Opus 5 (1M context)** and saved as your default".utf8

@@ -13,15 +13,22 @@ struct DiscoveredAgentSession: Sendable {
     let model: String?
     let lastResponsePreview: String?
     let state: AgentSessionState
+    let taskTurnID: String?
+    let taskStartedAt: Date?
     let terminal: TerminalContext
 }
 
 final class CodingAgentProcessDiscovery {
     private let queue = DispatchQueue(label: "com.augustalabs.anton.agent-discovery")
     private var timer: DispatchSourceTimer?
+    private var cachedTerminalInventory = TerminalInventory()
+    private var terminalInventoryRefreshedAt = Date.distantPast
+    private var cachedWorkingDirectories: [Int32: (path: String?, storedAt: Date)] = [:]
 
     func discoverNow() -> [DiscoveredAgentSession] {
-        Self.discover()
+        queue.sync {
+            discover()
+        }
     }
 
     func start(onUpdate: @escaping @Sendable ([DiscoveredAgentSession]) -> Void) {
@@ -29,10 +36,11 @@ final class CodingAgentProcessDiscovery {
         refresh(onUpdate: onUpdate)
 
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        // Hooks are immediate, but sessions opened before Anton and local
-        // rollout-only completions rely on this fallback. Two seconds keeps
-        // the board feeling live without an intrusive notification mechanism.
-        timer.schedule(deadline: .now() + 2, repeating: 2)
+        // Hooks are immediate. This fallback only needs to reconcile sessions
+        // opened before Anton and lifecycle updates missed by hooks. Keep the
+        // scan deliberately infrequent because it runs `ps`, `lsof`, and local
+        // metadata lookups.
+        timer.schedule(deadline: .now() + 5, repeating: 5)
         timer.setEventHandler { [weak self] in
             self?.refresh(onUpdate: onUpdate)
         }
@@ -46,30 +54,63 @@ final class CodingAgentProcessDiscovery {
     }
 
     private func refresh(onUpdate: @escaping @Sendable ([DiscoveredAgentSession]) -> Void) {
-        queue.async {
-            onUpdate(Self.discover())
+        queue.async { [weak self] in
+            guard let self else { return }
+            onUpdate(discover())
         }
     }
 
-    private static func discover() -> [DiscoveredAgentSession] {
-        let terminalInventory = TerminalInventory.read()
-        let processes = psLines(arguments: ["-axo", "pid=,tty=,args="])
-
-        return processes.compactMap { line in
+    private func discover() -> [DiscoveredAgentSession] {
+        let processes = Self.psLines(arguments: ["-axo", "pid=,tty=,args="])
+        let candidates: [(
+            processID: Int32,
+            rawTTY: String,
+            agent: AgentKind
+        )] = processes.compactMap { line in
             let fields = line.split(maxSplits: 2, whereSeparator: \.isWhitespace)
+            guard fields.count >= 3, let processID = Int32(fields[0]) else {
+                return nil
+            }
+            let arguments = String(fields[2])
             guard
-                fields.count >= 3,
-                let processID = Int32(fields[0]),
-                let agent = agentKind(for: String(fields[2]))
+                !arguments.contains(" app-server"),
+                let agent = AgentProcessClassifier.agentKind(for: arguments)
             else {
                 return nil
             }
-
-            let arguments = String(fields[2])
-            guard !arguments.contains(" app-server") else { return nil }
-
             let rawTTY = String(fields[1])
             guard rawTTY != "??", rawTTY != "-" else { return nil }
+            return (processID, rawTTY, agent)
+        }
+        let liveProcessIDs = Set(candidates.map(\.processID))
+        cachedWorkingDirectories = cachedWorkingDirectories.filter {
+            liveProcessIDs.contains($0.key)
+        }
+        LocalAgentSessionMetadata.pruneCaches(liveProcessIDs: liveProcessIDs)
+
+        // The hook bridge remains live even with no CLI process. Avoid
+        // launching AppleScript, lsof, and sqlite helpers during those idle
+        // periods; one inexpensive `ps` scan is sufficient.
+        guard !candidates.isEmpty else { return [] }
+
+        if Date().timeIntervalSince(terminalInventoryRefreshedAt) >= 30 {
+            cachedTerminalInventory = TerminalInventory.read(
+                terminalRunning: processes.contains {
+                    $0.contains("/Terminal.app/Contents/MacOS/Terminal")
+                },
+                iTermRunning: processes.contains {
+                    $0.contains("/iTerm.app/Contents/MacOS/iTerm2")
+                        || $0.contains("/iTerm2.app/Contents/MacOS/iTerm2")
+                }
+            )
+            terminalInventoryRefreshedAt = Date()
+        }
+        let terminalInventory = cachedTerminalInventory
+
+        return candidates.map { candidate in
+            let processID = candidate.processID
+            let agent = candidate.agent
+            let rawTTY = candidate.rawTTY
             let tty = rawTTY.hasPrefix("/") ? rawTTY : "/dev/\(rawTTY)"
             let metadata = LocalAgentSessionMetadata.read(agent: agent, processID: processID)
             let terminal: TerminalContext
@@ -105,18 +146,21 @@ final class CodingAgentProcessDiscovery {
                 model: metadata.model,
                 lastResponsePreview: metadata.lastResponsePreview,
                 state: metadata.state,
+                taskTurnID: metadata.taskTurnID,
+                taskStartedAt: metadata.taskStartedAt,
                 terminal: terminal
             )
         }
     }
 
-    private static func agentKind(for arguments: String) -> AgentKind? {
-        guard let command = arguments.split(whereSeparator: \.isWhitespace).first else { return nil }
-        switch URL(fileURLWithPath: String(command)).lastPathComponent.lowercased() {
-        case "codex": return .codex
-        case "claude": return .claude
-        default: return nil
+    private func workingDirectory(for processID: Int32) -> String? {
+        if let cached = cachedWorkingDirectories[processID],
+           Date().timeIntervalSince(cached.storedAt) < 60 {
+            return cached.path
         }
+        let path = Self.workingDirectory(for: processID)
+        cachedWorkingDirectories[processID] = (path, Date())
+        return path
     }
 
     private static func workingDirectory(for processID: Int32) -> String? {
@@ -166,25 +210,37 @@ private struct TerminalInventory {
     var terminalTitles: [String: String]
     var iTermSessions: [String: ITermSession]
 
-    static func read() -> TerminalInventory {
-        TerminalInventory(
-            terminalTitles: Dictionary(
-                uniqueKeysWithValues: runAppleScript(terminalTTYScript).compactMap { value in
-                    let parts = value.split(separator: "|", maxSplits: 1).map(String.init)
-                    guard parts.count == 2 else { return nil }
-                    return (parts[0], parts[1])
-                }
-            ),
-            iTermSessions: Dictionary(
-                uniqueKeysWithValues: runAppleScript(iTermTTYScript).compactMap { value in
-                    let parts = value.split(separator: "|", maxSplits: 2).map(String.init)
-                    guard parts.count >= 2 else { return nil }
-                    return (parts[0], ITermSession(
-                        identifier: parts[1],
-                        title: parts.count == 3 ? parts[2] : nil
-                    ))
-                }
-            )
+    init(
+        terminalTitles: [String: String] = [:],
+        iTermSessions: [String: ITermSession] = [:]
+    ) {
+        self.terminalTitles = terminalTitles
+        self.iTermSessions = iTermSessions
+    }
+
+    static func read(
+        terminalRunning: Bool,
+        iTermRunning: Bool
+    ) -> TerminalInventory {
+        let terminalValues = terminalRunning
+            ? runAppleScript(terminalTTYScript)
+            : []
+        let iTermValues = iTermRunning
+            ? runAppleScript(iTermTTYScript)
+            : []
+        let parsed = TerminalInventoryParser.parse(
+            terminalLines: terminalValues,
+            iTermLines: iTermValues
+        )
+
+        return TerminalInventory(
+            terminalTitles: parsed.terminalTitles,
+            iTermSessions: parsed.iTermSessions.mapValues {
+                ITermSession(
+                    identifier: $0.identifier,
+                    title: $0.title
+                )
+            }
         )
     }
 
@@ -205,7 +261,7 @@ private struct TerminalInventory {
                 return []
             }
             return text
-                .split(separator: ",")
+                .split(whereSeparator: \.isNewline)
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
         } catch {
@@ -225,7 +281,10 @@ private struct TerminalInventory {
                 set end of values to (tty of terminalTab) & "|" & titleText
             end repeat
         end repeat
-        return values
+        set AppleScript's text item delimiters to linefeed
+        set output to values as text
+        set AppleScript's text item delimiters to ""
+        return output
     end tell
     """
 
@@ -239,7 +298,10 @@ private struct TerminalInventory {
                 end repeat
             end repeat
         end repeat
-        return values
+        set AppleScript's text item delimiters to linefeed
+        set output to values as text
+        set AppleScript's text item delimiters to ""
+        return output
     end tell
     """
 }

@@ -9,6 +9,7 @@ struct SessionCardView: View {
     @State private var reply = ""
     @State private var revealsDetail: Bool
     @State private var attachments: [URL] = []
+    @State private var isSending = false
 
     init(
         controller: AppController,
@@ -129,7 +130,7 @@ struct SessionCardView: View {
             VStack(alignment: .leading, spacing: 9) {
                 replyEditor(
                     placeholder: "Queue a message for \(session.agent.displayName)…",
-                    submit: { controller.queueReply(replyPayload(reply), to: session.id) }
+                    submit: queueCurrentReply
                 )
 
                 HStack {
@@ -150,7 +151,7 @@ struct SessionCardView: View {
                 replyEditor(
                     placeholder: "Reply to \(session.agent.displayName)…",
                     autoFocus: expandedByDefault,
-                    submit: { controller.sendReply(replyPayload(reply), to: session.id) }
+                    submit: sendCurrentReply
                 )
 
                 HStack {
@@ -299,16 +300,37 @@ struct SessionCardView: View {
 
     private func replyPayload(_ text: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        defer {
-            reply = ""
-            attachments = []
-        }
         guard !attachments.isEmpty else { return trimmed }
-        let lead = trimmed.isEmpty ? "Please inspect this screenshot." : trimmed
+        let lead = trimmed.isEmpty ? "Please inspect the attached file." : trimmed
         let paths = attachments.enumerated()
             .map { "\(attachmentLabel(for: $0.element, index: $0.offset)) attached locally: \($0.element.path)" }
             .joined(separator: "\n")
         return "\(lead)\n\n\(paths)"
+    }
+
+    private func queueCurrentReply() {
+        let payload = replyPayload(reply)
+        guard !payload.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        controller.queueReply(payload, to: session.id)
+        clearComposer()
+    }
+
+    private func sendCurrentReply() {
+        guard !isSending else { return }
+        let payload = replyPayload(reply)
+        guard !payload.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        isSending = true
+        controller.sendReply(payload, to: session.id) { success in
+            isSending = false
+            if success {
+                clearComposer()
+            }
+        }
+    }
+
+    private func clearComposer() {
+        reply = ""
+        attachments = []
     }
 
     private func attachmentLabel(for url: URL, index: Int) -> String {

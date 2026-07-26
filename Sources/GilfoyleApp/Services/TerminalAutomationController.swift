@@ -84,7 +84,16 @@ final class TerminalAutomationController: TerminalSessionControlling {
         process.standardOutput = output
         process.standardError = errors
         try process.run()
-        process.waitUntilExit()
+        let timeout = Date().addingTimeInterval(30)
+        while process.isRunning && Date() < timeout {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        if process.isRunning {
+            process.terminate()
+            throw TerminalAutomationError.scriptFailed(
+                "Terminal automation timed out. Your draft is still available in Anton."
+            )
+        }
 
         let errorText = String(
             data: errors.fileHandleForReading.readDataToEndOfFile(),

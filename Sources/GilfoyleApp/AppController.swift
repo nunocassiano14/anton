@@ -19,30 +19,18 @@ final class AppController: ObservableObject {
     @Published private(set) var claudeIntegration: IntegrationStatus?
     @Published private(set) var codexIntegration: IntegrationStatus?
     @Published private(set) var environment = EnvironmentDetector.detect()
-    private var measuredCalloutHeight: CGFloat?
+    private var calloutAccessoryHeight: CGFloat = 0
 
     var preferredCalloutBodyHeight: CGFloat {
-        if let measuredCalloutHeight {
-            return min(620, max(280, measuredCalloutHeight + 2))
-        }
         guard let sessionID = calloutSessionID,
               let preview = sessionStore.session(id: sessionID)?.lastResponsePreview,
               !preview.isEmpty
-        else { return 360 }
-        // This is the whole callout body, not only the response text. Reserve
-        // space for its header, quick actions and reply composer first, then
-        // let a long response earn more room before it becomes scrollable.
+        else { return 256 + calloutAccessoryHeight }
         let visualLines = preview.components(separatedBy: .newlines).reduce(0) { total, line in
             total + max(1, Int(ceil(Double(line.count) / 90)))
         }
-        return min(500, max(360, 310 + CGFloat(visualLines) * 12))
-    }
-
-    func updateMeasuredCalloutHeight(_ height: CGFloat) {
-        guard calloutSessionID != nil, height > 0 else { return }
-        guard measuredCalloutHeight == nil || abs((measuredCalloutHeight ?? 0) - height) > 6 else { return }
-        measuredCalloutHeight = height
-        panelController?.setExpanded(true)
+        let responseHeight = min(250, max(38, 22 + CGFloat(visualLines) * 17))
+        return min(532, max(256, 218 + responseHeight) + calloutAccessoryHeight)
     }
 
     private let socketServer = UnixSocketServer()
@@ -105,10 +93,11 @@ final class AppController: ObservableObject {
             }
         }
         refreshEnvironment()
-        if preferences.onboardingComplete,
-           preferences.launchAtLoginPreference,
-           !launchAtLoginManager.isEnabled {
-            launchAtLoginManager.setEnabled(true)
+        // Older builds also registered SMAppService in addition to Anton's
+        // launchd supervisor. Keep a single startup owner to avoid two
+        // processes racing and bouncing the overlay at login.
+        if launchAtLoginManager.isEnabled {
+            launchAtLoginManager.disableLegacyRegistrationIfNeeded()
         }
         refreshIntegrations()
         if !preferences.onboardingComplete {
@@ -139,7 +128,7 @@ final class AppController: ObservableObject {
             cancelCalloutDismiss()
         }
         calloutSessionID = nil
-        measuredCalloutHeight = nil
+        calloutAccessoryHeight = 0
         focusedSessionID = nil
         isExpanded = expanded
         panelController?.setExpanded(expanded)
@@ -152,6 +141,7 @@ final class AppController: ObservableObject {
     func showSessionBoard(focusing sessionID: String? = nil) {
         cancelCalloutDismiss()
         calloutSessionID = nil
+        calloutAccessoryHeight = 0
         focusedSessionID = sessionID
         isExpanded = true
         panelController?.setExpanded(true)
@@ -170,6 +160,7 @@ final class AppController: ObservableObject {
     func dismissCallout() {
         cancelCalloutDismiss()
         calloutSessionID = nil
+        calloutAccessoryHeight = 0
         focusedSessionID = nil
         isExpanded = false
         panelController?.setExpanded(false)
@@ -177,7 +168,7 @@ final class AppController: ObservableObject {
 
     private func presentCallout(sessionID: String, dismissAfter: TimeInterval? = nil) {
         cancelCalloutDismiss()
-        measuredCalloutHeight = nil
+        calloutAccessoryHeight = 0
         calloutSessionID = sessionID
         focusedSessionID = nil
         isExpanded = true
@@ -189,6 +180,14 @@ final class AppController: ObservableObject {
         }
         calloutDismissWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + dismissAfter, execute: workItem)
+    }
+
+    func setCalloutHasAttachments(_ hasAttachments: Bool) {
+        guard calloutSessionID != nil else { return }
+        let nextHeight: CGFloat = hasAttachments ? 30 : 0
+        guard calloutAccessoryHeight != nextHeight else { return }
+        calloutAccessoryHeight = nextHeight
+        panelController?.setExpanded(true)
     }
 
     func replyFromCallout(sessionID: String) {
@@ -239,16 +238,25 @@ final class AppController: ObservableObject {
         showMessage("Response copied.")
     }
 
-    func sendReply(_ text: String, to sessionID: String) {
+    func sendReply(
+        _ text: String,
+        to sessionID: String,
+        completion: @escaping (Bool) -> Void = { _ in }
+    ) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let session = sessionStore.session(id: sessionID) else { return }
+        guard !trimmed.isEmpty, let session = sessionStore.session(id: sessionID) else {
+            completion(false)
+            return
+        }
         terminalAutomation.send(text: trimmed, to: session) { [weak self] result in
             switch result {
             case .success:
                 self?.sessionStore.markWorking(sessionID: sessionID)
                 self?.collapsePanel()
+                completion(true)
             case .failure(let error):
                 self?.showMessage(error.localizedDescription)
+                completion(false)
             }
         }
     }
@@ -389,9 +397,6 @@ final class AppController: ObservableObject {
 
     func completeOnboarding() {
         preferences.onboardingComplete = true
-        if preferences.launchAtLoginPreference {
-            launchAtLoginManager.setEnabled(true)
-        }
         onboardingWindowController?.close()
         onboardingWindowController = nil
         setExpanded(true)

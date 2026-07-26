@@ -6,7 +6,10 @@ import Foundation
 @MainActor
 final class PermissionManager: ObservableObject {
     @Published private(set) var accessibilityTrusted = AXIsProcessTrusted()
-    @Published private(set) var automationRequestAttempted = false
+    @Published private(set) var automationFailures: [String]?
+
+    var automationRequestAttempted: Bool { automationFailures != nil }
+    var automationReady: Bool { automationFailures?.isEmpty == true }
 
     func refresh() {
         accessibilityTrusted = AXIsProcessTrusted()
@@ -20,16 +23,23 @@ final class PermissionManager: ObservableObject {
     }
 
     func requestAutomation(completion: @escaping ([String]) -> Void) {
-        let targets: [(String, String)] = [
-            (
+        var targets: [(String, String)] = []
+        if NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: "com.apple.Terminal"
+        ) != nil {
+            targets.append((
                 "Terminal",
                 #"tell application "Terminal" to get version"#
-            ),
-            (
+            ))
+        }
+        if NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: "com.googlecode.iterm2"
+        ) != nil {
+            targets.append((
                 "iTerm",
                 #"tell application "iTerm2" to get version"#
-            )
-        ]
+            ))
+        }
 
         DispatchQueue.global(qos: .userInitiated).async {
             var failures: [String] = []
@@ -51,7 +61,7 @@ final class PermissionManager: ObservableObject {
                 }
             }
             DispatchQueue.main.async {
-                self.automationRequestAttempted = true
+                self.automationFailures = failures
                 completion(failures)
             }
         }

@@ -46,6 +46,6 @@ public enum LocalAgentResponsePreview {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .joined(separator: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return formatted.isEmpty ? nil : formatted
+        return formatted.isEmpty ? nil : String(formatted.prefix(8_000))
     }
 }

@@ -35,9 +35,9 @@ struct SettingsView: View {
                     SettingsRow {
                         VStack(alignment: .leading, spacing: 3) {
                             HStack(spacing: 9) {
-                                Image(systemName: permissionManager.automationRequestAttempted ? "checkmark.circle.fill" : "circle.dashed")
-                                    .foregroundStyle(permissionManager.automationRequestAttempted ? Color.green : Color.orange)
-                                Text("Terminal & iTerm")
+                                Image(systemName: automationStatusIcon)
+                                    .foregroundStyle(automationStatusColor)
+                                Text("Terminal / iTerm")
                                     .font(.system(size: 12.5, weight: .medium))
                             }
                             Text("Required to reply directly to the original agent tab.")
@@ -67,6 +67,18 @@ struct SettingsView: View {
             controller.refreshEnvironment()
             controller.refreshIntegrations()
         }
+    }
+
+    private var automationStatusIcon: String {
+        if permissionManager.automationReady { return "checkmark.circle.fill" }
+        if permissionManager.automationRequestAttempted { return "xmark.circle.fill" }
+        return "circle.dashed"
+    }
+
+    private var automationStatusColor: Color {
+        if permissionManager.automationReady { return .green }
+        if permissionManager.automationRequestAttempted { return .red }
+        return .orange
     }
 
     private var title: some View {

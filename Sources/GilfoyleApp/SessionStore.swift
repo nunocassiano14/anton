@@ -15,6 +15,8 @@ final class SessionStore: ObservableObject {
     /// reply was delivered. Do not treat that old completion as the reply to
     /// the newly sent prompt until a new working boundary is observed.
     private var awaitingFreshTaskStart: Set<String> = []
+    private var latestTaskTurnID: [String: String] = [:]
+    private var replySentAt: [String: Date] = [:]
 
     var activeCount: Int {
         sessions.filter {
@@ -56,6 +58,7 @@ final class SessionStore: ObservableObject {
         } else if session.state == .finished || session.state == .error || session.state == .disconnected {
             awaitingResponse.remove(session.id)
             awaitingFreshTaskStart.remove(session.id)
+            replySentAt.removeValue(forKey: session.id)
         }
         if reduction.didCompleteMainTurn {
             lastCompletedSessionID = session.id
@@ -93,9 +96,13 @@ final class SessionStore: ObservableObject {
                     && awaitingResponse.contains(previous.id)
                     && awaitingFreshTaskStart.contains(previous.id)
                     && process.state == .finished
+                    && !hasFreshTaskBoundary(process, sessionID: previous.id)
 
-                if process.state == .working {
+                if process.state == .working || hasFreshTaskBoundary(process, sessionID: previous.id) {
                     awaitingFreshTaskStart.remove(previous.id)
+                }
+                if let turnID = process.taskTurnID {
+                    latestTaskTurnID[previous.id] = turnID
                 }
 
                 if shouldHoldWorking || isPriorCompletionAfterReply {
@@ -140,6 +147,7 @@ final class SessionStore: ObservableObject {
                 if didComplete {
                     awaitingResponse.remove(session.id)
                     awaitingFreshTaskStart.remove(session.id)
+                    replySentAt.removeValue(forKey: session.id)
                     completedSessionIDs.append(session.id)
                     lastCompletedSessionID = session.id
                 }
@@ -158,13 +166,31 @@ final class SessionStore: ObservableObject {
             session.lastResponsePreview = process.lastResponsePreview
             session.currentActivity = SessionDiscoveryReducer.activity(for: process.state)
             upsert(session)
+            if let turnID = process.taskTurnID {
+                latestTaskTurnID[session.id] = turnID
+            }
         }
 
         // Discovery is only a live fallback. If a process vanished before a
         // lifecycle hook could identify it, remove its synthetic row.
+        let vanishedSyntheticSessionIDs = sessions.compactMap { session -> String? in
+            guard
+                session.agentSessionID.hasPrefix("process-"),
+                !liveProcessIDs.contains(session.terminal.processID ?? -1)
+            else {
+                return nil
+            }
+            return session.id
+        }
         sessions.removeAll {
             $0.agentSessionID.hasPrefix("process-")
                 && !liveProcessIDs.contains($0.terminal.processID ?? -1)
+        }
+        for sessionID in vanishedSyntheticSessionIDs {
+            awaitingResponse.remove(sessionID)
+            awaitingFreshTaskStart.remove(sessionID)
+            latestTaskTurnID.removeValue(forKey: sessionID)
+            replySentAt.removeValue(forKey: sessionID)
         }
         sortSessions()
         return completedSessionIDs
@@ -191,6 +217,7 @@ final class SessionStore: ObservableObject {
         if awaitingReply {
             awaitingResponse.insert(sessionID)
             awaitingFreshTaskStart.insert(sessionID)
+            replySentAt[sessionID] = Date()
         }
         acknowledgeCompletion(sessionID: sessionID)
     }
@@ -227,6 +254,8 @@ final class SessionStore: ObservableObject {
         sessions.removeAll(where: { $0.id == sessionID })
         awaitingResponse.remove(sessionID)
         awaitingFreshTaskStart.remove(sessionID)
+        latestTaskTurnID.removeValue(forKey: sessionID)
+        replySentAt.removeValue(forKey: sessionID)
         if lastCompletedSessionID == sessionID {
             lastCompletedSessionID = nil
         }
@@ -297,5 +326,23 @@ final class SessionStore: ObservableObject {
               !rhsTTY.isEmpty
         else { return false }
         return lhsTTY == rhsTTY
+    }
+
+    private func hasFreshTaskBoundary(
+        _ process: DiscoveredAgentSession,
+        sessionID: String
+    ) -> Bool {
+        if let turnID = process.taskTurnID,
+           let previousTurnID = latestTaskTurnID[sessionID] {
+            return turnID != previousTurnID
+        }
+        guard let taskStartedAt = process.taskStartedAt,
+              let sentAt = replySentAt[sessionID]
+        else {
+            return process.state == .working
+        }
+        // Codex timestamps task starts to whole seconds. Allow for that
+        // precision while still rejecting the old completed turn.
+        return taskStartedAt >= sentAt.addingTimeInterval(-1)
     }
 }

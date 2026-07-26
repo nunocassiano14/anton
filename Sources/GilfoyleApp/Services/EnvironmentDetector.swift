@@ -8,7 +8,8 @@ struct EnvironmentDetection {
     var iTermInstalled: Bool
 
     var isReady: Bool {
-        claudePath != nil && codexPath != nil && terminalInstalled && iTermInstalled
+        (claudePath != nil || codexPath != nil)
+            && (terminalInstalled || iTermInstalled)
     }
 }
 enum EnvironmentDetector {

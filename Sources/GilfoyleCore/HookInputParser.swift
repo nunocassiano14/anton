@@ -53,7 +53,7 @@ public enum HookInputParser {
         }
 
         let assistantMessage = (raw["last_assistant_message"] as? String).map {
-            String($0.prefix(1_000))
+            String($0.prefix(8_000))
         }
 
         let event = HookEventPayload(

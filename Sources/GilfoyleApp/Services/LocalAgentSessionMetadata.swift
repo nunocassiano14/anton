@@ -9,16 +9,47 @@ struct LocalAgentSessionMetadata {
     var cwd: String?
     var lastResponsePreview: String?
     var state: AgentSessionState = .idle
+    var taskTurnID: String?
+    var taskStartedAt: Date?
+
+    private struct CachedCodexSession {
+        let value: (id: String, rolloutURL: URL)?
+        let storedAt: Date
+    }
+
+    private struct CachedCodexDetails {
+        let value: (name: String?, model: String?)
+        let storedAt: Date
+    }
+
+    private static let cacheLock = NSLock()
+    private static var codexSessionCache: [Int32: CachedCodexSession] = [:]
+    private static var codexDetailsCache: [String: CachedCodexDetails] = [:]
+
+    static func pruneCaches(liveProcessIDs: Set<Int32>) {
+        cacheLock.lock()
+        codexSessionCache = codexSessionCache.filter {
+            liveProcessIDs.contains($0.key)
+        }
+        let cutoff = Date().addingTimeInterval(-300)
+        codexDetailsCache = codexDetailsCache.filter {
+            $0.value.storedAt >= cutoff
+        }
+        cacheLock.unlock()
+    }
 
     static func read(agent: AgentKind, processID: Int32) -> LocalAgentSessionMetadata {
-        if agent == .codex, let session = codexSession(openBy: processID) {
-            let details = titleAndModel(agent: .codex, sessionID: session.id)
+        if agent == .codex, let session = cachedCodexSession(openBy: processID) {
+            let details = cachedCodexDetails(sessionID: session.id)
             let rollout = rolloutData(session.rolloutURL)
+            let lifecycle = CodexRolloutLifecycle.snapshot(in: rollout)
             return LocalAgentSessionMetadata(
                 name: details.name,
                 model: details.model,
                 lastResponsePreview: LocalAgentResponsePreview.codex(in: rollout),
-                state: CodexRolloutLifecycle.state(in: rollout)
+                state: lifecycle.state,
+                taskTurnID: lifecycle.turnID,
+                taskStartedAt: lifecycle.taskStartedAt
             )
         }
         guard agent == .claude else { return LocalAgentSessionMetadata() }
@@ -104,7 +135,61 @@ struct LocalAgentSessionMetadata {
     /// Codex keeps the active rollout JSONL open for the lifetime of the
     /// process. `lsof` gives us the exact PID → thread association, including
     /// sessions that were already open when Anton launched.
-    private static func codexSession(openBy processID: Int32) -> (id: String, rolloutURL: URL)? {
+    private static func cachedCodexSession(
+        openBy processID: Int32
+    ) -> (id: String, rolloutURL: URL)? {
+        cacheLock.lock()
+        if let cached = codexSessionCache[processID] {
+            let lifetime: TimeInterval = cached.value == nil ? 5 : 60
+            guard Date().timeIntervalSince(cached.storedAt) < lifetime else {
+                cacheLock.unlock()
+                return refreshCodexSessionCache(processID: processID)
+            }
+            cacheLock.unlock()
+            return cached.value
+        }
+        cacheLock.unlock()
+
+        return refreshCodexSessionCache(processID: processID)
+    }
+
+    private static func refreshCodexSessionCache(
+        processID: Int32
+    ) -> (id: String, rolloutURL: URL)? {
+        let value = locateCodexSession(openBy: processID)
+        cacheLock.lock()
+        codexSessionCache[processID] = CachedCodexSession(
+            value: value,
+            storedAt: Date()
+        )
+        cacheLock.unlock()
+        return value
+    }
+
+    private static func cachedCodexDetails(
+        sessionID: String
+    ) -> (name: String?, model: String?) {
+        cacheLock.lock()
+        if let cached = codexDetailsCache[sessionID],
+           Date().timeIntervalSince(cached.storedAt) < 30 {
+            cacheLock.unlock()
+            return cached.value
+        }
+        cacheLock.unlock()
+
+        let value = titleAndModel(agent: .codex, sessionID: sessionID)
+        cacheLock.lock()
+        codexDetailsCache[sessionID] = CachedCodexDetails(
+            value: value,
+            storedAt: Date()
+        )
+        cacheLock.unlock()
+        return value
+    }
+
+    private static func locateCodexSession(
+        openBy processID: Int32
+    ) -> (id: String, rolloutURL: URL)? {
         let process = Process()
         let output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
