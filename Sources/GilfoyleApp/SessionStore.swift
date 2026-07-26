@@ -1,0 +1,301 @@
+import Combine
+import Foundation
+import GilfoyleCore
+
+@MainActor
+final class SessionStore: ObservableObject {
+    @Published private(set) var sessions: [AgentSession] = []
+    @Published private(set) var lastCompletedSessionID: String?
+    /// Anton's definition of working is deliberately user-centric: from the
+    /// moment a prompt is sent until that prompt has a completed response.
+    /// Local rollouts can be quiet between tool events, so their temporary
+    /// `idle` observation must never make an in-flight turn look finished.
+    private var awaitingResponse: Set<String> = []
+    /// A completed rollout can briefly remain the latest local event after a
+    /// reply was delivered. Do not treat that old completion as the reply to
+    /// the newly sent prompt until a new working boundary is observed.
+    private var awaitingFreshTaskStart: Set<String> = []
+
+    var activeCount: Int {
+        sessions.filter {
+            $0.state == .working
+                || $0.state == .needsApproval
+                || $0.state == .hasQuestion
+        }.count
+    }
+
+    var needsUserCount: Int {
+        sessions.filter { $0.state.needsUser }.count
+    }
+
+    @discardableResult
+    func ingest(_ request: BridgeRequest, now: Date = Date()) -> SessionReduction {
+        let id = "\(request.agent.rawValue):\(request.event.sessionID)"
+        let exactSession = sessions.first(where: { $0.id == id })
+        let discoveredSession = exactSession == nil
+            ? sessions.first(where: {
+                $0.agentSessionID.hasPrefix("process-")
+                    && sameTerminal($0, request.agent, request.terminal)
+            })
+            : nil
+        let existing = exactSession ?? discoveredSession
+        let reduction = SessionReducer.reduce(existing: existing, request: request, now: now)
+        var session = reduction.session
+        // A process-discovery entry is intentionally synthetic. The first
+        // official lifecycle hook upgrades it in place rather than creating a
+        // duplicate row for the same terminal process.
+        if discoveredSession != nil {
+            session.id = id
+            session.agentSessionID = request.event.sessionID
+            sessions.removeAll(where: { $0.id == discoveredSession?.id })
+        }
+        upsert(session)
+        if session.state == .working {
+            awaitingResponse.insert(session.id)
+            awaitingFreshTaskStart.remove(session.id)
+        } else if session.state == .finished || session.state == .error || session.state == .disconnected {
+            awaitingResponse.remove(session.id)
+            awaitingFreshTaskStart.remove(session.id)
+        }
+        if reduction.didCompleteMainTurn {
+            lastCompletedSessionID = session.id
+        }
+        return SessionReduction(
+            session: session,
+            didCompleteMainTurn: reduction.didCompleteMainTurn,
+            requiresInteractiveResponse: reduction.requiresInteractiveResponse
+        )
+    }
+
+    /// Reconciles the low-level process scanner with the board. Returns only
+    /// genuine work → completed transitions, so callers can present a
+    /// completion callout without announcing sessions that merely existed when
+    /// Anton launched.
+    @discardableResult
+    func discover(_ processes: [DiscoveredAgentSession], now: Date = Date()) -> [String] {
+        let liveProcessIDs = Set(processes.map(\.processID))
+        var completedSessionIDs: [String] = []
+        for process in processes {
+            if let index = sessions.firstIndex(where: {
+                sameTerminal($0, process.agent, process.terminal)
+            }) {
+                let previous = sessions[index]
+                let followsLocalCodexLifecycle = process.agent == .codex
+                    && ![.needsApproval, .hasQuestion, .error, .disconnected].contains(previous.state)
+                let session: AgentSession
+                let didComplete: Bool
+
+                let shouldHoldWorking = previous.state == .working
+                    && awaitingResponse.contains(previous.id)
+                    && process.state == .idle
+
+                let isPriorCompletionAfterReply = previous.state == .working
+                    && awaitingResponse.contains(previous.id)
+                    && awaitingFreshTaskStart.contains(previous.id)
+                    && process.state == .finished
+
+                if process.state == .working {
+                    awaitingFreshTaskStart.remove(previous.id)
+                }
+
+                if shouldHoldWorking || isPriorCompletionAfterReply {
+                    // The rollout has no fresh boundary yet. Preserve the
+                    // visible working state until a completion event arrives.
+                    var waiting = previous
+                    waiting.sessionName = process.sessionName ?? previous.sessionName
+                    waiting.model = process.model ?? previous.model
+                    waiting.lastResponsePreview = process.lastResponsePreview ?? previous.lastResponsePreview
+                    waiting.updatedAt = now
+                    sessions[index] = waiting
+                    continue
+                } else if previous.agentSessionID.hasPrefix("process-") || followsLocalCodexLifecycle {
+                    let reduction = SessionDiscoveryReducer.reduce(
+                        existing: previous,
+                        cwd: process.cwd,
+                        sessionName: process.sessionName,
+                        model: process.model,
+                        lastResponsePreview: process.lastResponsePreview,
+                        state: process.state,
+                        now: now
+                    )
+                    session = reduction.session
+                    didComplete = reduction.didCompleteMainTurn
+                } else {
+                    // Claude's hook lifecycle remains authoritative, but its
+                    // local session metadata can still refresh a renamed
+                    // conversation or a model change without producing a
+                    // duplicate process-discovery row.
+                    var refreshed = previous
+                    refreshed.cwd = process.cwd
+                    refreshed.projectName = URL(fileURLWithPath: process.cwd).lastPathComponent
+                    refreshed.sessionName = process.sessionName ?? previous.sessionName
+                    refreshed.model = process.model ?? previous.model
+                    refreshed.lastResponsePreview = process.lastResponsePreview ?? previous.lastResponsePreview
+                    refreshed.updatedAt = now
+                    session = refreshed
+                    didComplete = false
+                }
+                sessions[index] = session
+
+                if didComplete {
+                    awaitingResponse.remove(session.id)
+                    awaitingFreshTaskStart.remove(session.id)
+                    completedSessionIDs.append(session.id)
+                    lastCompletedSessionID = session.id
+                }
+                continue
+            }
+            var session = AgentSession(
+                agent: process.agent,
+                agentSessionID: "process-\(process.processID)",
+                cwd: process.cwd,
+                sessionName: process.sessionName,
+                model: process.model,
+                state: process.state,
+                startedAt: now,
+                terminal: process.terminal
+            )
+            session.lastResponsePreview = process.lastResponsePreview
+            session.currentActivity = SessionDiscoveryReducer.activity(for: process.state)
+            upsert(session)
+        }
+
+        // Discovery is only a live fallback. If a process vanished before a
+        // lifecycle hook could identify it, remove its synthetic row.
+        sessions.removeAll {
+            $0.agentSessionID.hasPrefix("process-")
+                && !liveProcessIDs.contains($0.terminal.processID ?? -1)
+        }
+        sortSessions()
+        return completedSessionIDs
+    }
+
+    func enrich(sessionID: String, name: String? = nil, model: String? = nil) {
+        update(sessionID: sessionID) {
+            if let name, !name.isEmpty { $0.sessionName = name }
+            if let model, !model.isEmpty { $0.model = model }
+        }
+    }
+
+    func markWorking(
+        sessionID: String,
+        activity: String = "Prompt sent",
+        awaitingReply: Bool = true
+    ) {
+        update(sessionID: sessionID) {
+            $0.state = .working
+            $0.currentActivity = activity
+            $0.interaction = nil
+            $0.updatedAt = Date()
+        }
+        if awaitingReply {
+            awaitingResponse.insert(sessionID)
+            awaitingFreshTaskStart.insert(sessionID)
+        }
+        acknowledgeCompletion(sessionID: sessionID)
+    }
+
+    func resolveInteraction(sessionID: String, nextState: AgentSessionState = .working) {
+        update(sessionID: sessionID) {
+            $0.interaction = nil
+            $0.state = nextState
+            $0.currentActivity = nextState == .working ? "Continuing" : $0.currentActivity
+            $0.updatedAt = Date()
+        }
+        if nextState != .working {
+            awaitingResponse.remove(sessionID)
+            awaitingFreshTaskStart.remove(sessionID)
+        }
+    }
+
+    func markDisconnected(sessionID: String, reason: String = "Agent process exited") {
+        update(sessionID: sessionID) {
+            $0.interaction = nil
+            $0.state = .disconnected
+            $0.currentActivity = reason
+            $0.updatedAt = Date()
+        }
+    }
+
+    func acknowledgeCompletion(sessionID: String) {
+        if lastCompletedSessionID == sessionID {
+            lastCompletedSessionID = nil
+        }
+    }
+
+    func dismiss(sessionID: String) {
+        sessions.removeAll(where: { $0.id == sessionID })
+        awaitingResponse.remove(sessionID)
+        awaitingFreshTaskStart.remove(sessionID)
+        if lastCompletedSessionID == sessionID {
+            lastCompletedSessionID = nil
+        }
+    }
+
+    func session(id: String) -> AgentSession? {
+        sessions.first(where: { $0.id == id })
+    }
+
+    private func update(sessionID: String, mutate: (inout AgentSession) -> Void) {
+        guard let index = sessions.firstIndex(where: { $0.id == sessionID }) else { return }
+        var value = sessions[index]
+        mutate(&value)
+        sessions[index] = value
+        sortSessions()
+    }
+
+    private func upsert(_ session: AgentSession) {
+        if let index = sessions.firstIndex(where: { $0.id == session.id }) {
+            sessions[index] = session
+        } else {
+            sessions.append(session)
+        }
+        sortSessions()
+    }
+
+    private func sortSessions() {
+        sessions.sort { lhs, rhs in
+            let lhsPriority = priority(lhs.state)
+            let rhsPriority = priority(rhs.state)
+            if lhsPriority != rhsPriority { return lhsPriority < rhsPriority }
+            return lhs.updatedAt > rhs.updatedAt
+        }
+    }
+
+    private func priority(_ state: AgentSessionState) -> Int {
+        switch state {
+        // The board is action-first: an approval is the most time-sensitive,
+        // then a question, followed by failures that need attention.
+        case .needsApproval: return 0
+        case .hasQuestion: return 1
+        case .error: return 2
+        case .working: return 3
+        case .finished: return 4
+        case .idle: return 5
+        case .disconnected: return 6
+        }
+    }
+
+    /// Hook processes can report a shell parent PID while local discovery
+    /// reports the agent PID. The terminal TTY identifies the actual tab and
+    /// is the reliable fallback; keeping the agent kind prevents cross-agent
+    /// matches in a shared terminal window.
+    private func sameTerminal(
+        _ session: AgentSession,
+        _ agent: AgentKind,
+        _ terminal: TerminalContext
+    ) -> Bool {
+        guard session.agent == agent else { return false }
+        if let lhs = session.terminal.processID,
+           let rhs = terminal.processID,
+           lhs == rhs {
+            return true
+        }
+        guard let lhsTTY = session.terminal.tty?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let rhsTTY = terminal.tty?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !lhsTTY.isEmpty,
+              !rhsTTY.isEmpty
+        else { return false }
+        return lhsTTY == rhsTTY
+    }
+}

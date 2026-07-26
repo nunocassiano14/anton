@@ -1,0 +1,231 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXFileReference section */
+		101000000000000000000001 /* Anton.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = build/Anton.app; sourceTree = SOURCE_ROOT; };
+		101000000000000000000002 /* Package.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Package.swift; sourceTree = "<group>"; };
+		101000000000000000000003 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		101000000000000000000004 /* build-app.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "build-app.sh"; sourceTree = "<group>"; };
+		101000000000000000000005 /* test.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = test.sh; sourceTree = "<group>"; };
+		101000000000000000000006 /* install-local.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "install-local.sh"; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		102000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				101000000000000000000002 /* Package.swift */,
+				103000000000000000000001 /* Sources */,
+				103000000000000000000002 /* Tests */,
+				103000000000000000000003 /* Resources */,
+				103000000000000000000004 /* Scripts */,
+				103000000000000000000005 /* docs */,
+				101000000000000000000003 /* README.md */,
+				102000000000000000000002 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		102000000000000000000002 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				101000000000000000000001 /* Anton.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		103000000000000000000001 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		103000000000000000000002 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
+		103000000000000000000003 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		103000000000000000000004 /* Scripts */ = {
+			isa = PBXGroup;
+			children = (
+				101000000000000000000004 /* build-app.sh */,
+				101000000000000000000005 /* test.sh */,
+				101000000000000000000006 /* install-local.sh */,
+			);
+			path = Scripts;
+			sourceTree = "<group>";
+		};
+		103000000000000000000005 /* docs */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = docs;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXLegacyTarget section */
+		104000000000000000000001 /* Anton */ = {
+			isa = PBXLegacyTarget;
+			buildArgumentsString = "Scripts/build-app.sh";
+			buildConfigurationList = 106000000000000000000002 /* Build configuration list for PBXLegacyTarget "Anton" */;
+			buildPhases = (
+			);
+			buildToolPath = /bin/bash;
+			buildWorkingDirectory = "$(PROJECT_DIR)";
+			dependencies = (
+			);
+			name = Anton;
+			passBuildSettingsInEnvironment = 1;
+			productName = Anton;
+			productReference = 101000000000000000000001 /* Anton.app */;
+			productType = "com.apple.product-type.application";
+		};
+		104000000000000000000002 /* AntonTests */ = {
+			isa = PBXLegacyTarget;
+			buildArgumentsString = "Scripts/test.sh";
+			buildConfigurationList = 106000000000000000000003 /* Build configuration list for PBXLegacyTarget "AntonTests" */;
+			buildPhases = (
+			);
+			buildToolPath = /bin/bash;
+			buildWorkingDirectory = "$(PROJECT_DIR)";
+			dependencies = (
+			);
+			name = AntonTests;
+			passBuildSettingsInEnvironment = 1;
+			productName = AntonTests;
+		};
+/* End PBXLegacyTarget section */
+
+/* Begin PBXProject section */
+		105000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					104000000000000000000001 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+					104000000000000000000002 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+				};
+			};
+			buildConfigurationList = 106000000000000000000001 /* Build configuration list for PBXProject "Anton" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 102000000000000000000001;
+			productRefGroup = 102000000000000000000002 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				104000000000000000000001 /* Anton */,
+				104000000000000000000002 /* AntonTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin XCBuildConfiguration section */
+		107000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.augustalabs.anton;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		107000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.augustalabs.anton;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		107000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CONFIGURATION_BUILD_DIR = "$(PROJECT_DIR)/build";
+				PRODUCT_NAME = Anton;
+			};
+			name = Debug;
+		};
+		107000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CONFIGURATION_BUILD_DIR = "$(PROJECT_DIR)/build";
+				PRODUCT_NAME = Anton;
+			};
+			name = Release;
+		};
+		107000000000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PRODUCT_NAME = AntonTests;
+			};
+			name = Debug;
+		};
+		107000000000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PRODUCT_NAME = AntonTests;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		106000000000000000000001 /* Build configuration list for PBXProject "Anton" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				107000000000000000000001 /* Debug */,
+				107000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		106000000000000000000002 /* Build configuration list for PBXLegacyTarget "Anton" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				107000000000000000000003 /* Debug */,
+				107000000000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		106000000000000000000003 /* Build configuration list for PBXLegacyTarget "AntonTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				107000000000000000000005 /* Debug */,
+				107000000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 105000000000000000000001 /* Project object */;
+}

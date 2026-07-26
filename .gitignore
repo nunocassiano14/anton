@@ -1,0 +1,16 @@
+.DS_Store
+/.build
+/build
+/DerivedData
+/Library/
+/.env
+/.env.*
+!.env.example
+*.xcarchive
+*.dSYM
+/*.xcworkspace/xcuserdata
+/*.xcodeproj/xcuserdata
+*.xccheckout
+*.xcuserstate
+*.backup
+*.swp
