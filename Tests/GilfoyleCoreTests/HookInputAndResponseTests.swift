@@ -66,6 +66,43 @@ struct HookInputAndResponseTests {
         #expect(decision["behavior"] as? String == "allow")
     }
 
+    @Test("Claude Stop recovers an omitted response from its local transcript")
+    func claudeStopRecoversResponseFromTranscript() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AntonClaudeStop-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let transcript = directory.appendingPathComponent("session.jsonl")
+        let transcriptData = Data(
+            """
+            {"type":"user","uuid":"turn","timestamp":"2026-07-26T20:32:41.642Z","message":{"role":"user","content":"private prompt"}}
+            {"type":"assistant","uuid":"reply","timestamp":"2026-07-26T20:32:50.946Z","message":{"role":"assistant","content":[{"type":"text","text":"Recovered Claude response"}]}}
+            """.utf8
+        )
+        try transcriptData.write(to: transcript)
+        let input = try JSONSerialization.data(
+            withJSONObject: [
+                "hook_event_name": "Stop",
+                "session_id": "session",
+                "cwd": "/tmp/project",
+                "transcript_path": transcript.path
+            ]
+        )
+
+        let request = try ClaudeLifecycleAdapter().decode(
+            data: input,
+            terminal: TerminalContext(kind: .terminal),
+            token: "token"
+        )
+        #expect(request.event.lastAssistantMessage == "Recovered Claude response")
+        let encoded = String(decoding: try JSONEncoder().encode(request), as: UTF8.self)
+        #expect(!encoded.contains(transcript.path))
+        #expect(!encoded.contains("private prompt"))
+    }
+
     @Test("Claude question answers are injected into updatedInput")
     func claudeQuestionInjectsAnswersIntoUpdatedInput() throws {
         let request = makeRequest(

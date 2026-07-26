@@ -103,7 +103,7 @@ Anton has no accounts, analytics, telemetry, subscription code, cloud backend, H
 ~/Library/Application Support/Anton/
 ```
 
-The hook helper intentionally drops prompt text and transcript paths. It forwards only lifecycle metadata plus the current approval or question payload when the notch must render an interaction. Live sessions stay in memory. Preferences, the IPC token, and recoverable configuration backups are the only persistent Anton data.
+The hook helper never forwards prompt text or transcript paths. When Claude omits its final response from a Stop event, the helper reads only a bounded tail of the referenced local transcript, extracts the latest assistant response, and forwards that preview through Anton's private local socket. Live sessions stay in memory. Preferences, the IPC token, and recoverable configuration backups are the only persistent Anton data.
 
 See [Privacy](docs/PRIVACY.md) and [Architecture](docs/ARCHITECTURE.md) for the exact data flow.
 

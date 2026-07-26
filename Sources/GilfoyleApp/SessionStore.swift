@@ -53,7 +53,14 @@ final class SessionStore: ObservableObject {
         upsert(session)
         if session.state == .working {
             awaitingResponse.insert(session.id)
-            awaitingFreshTaskStart.remove(session.id)
+            if request.event.name == "UserPromptSubmit" {
+                awaitingFreshTaskStart.insert(session.id)
+                replySentAt[session.id] = now
+            } else {
+                // A tool event proves that the new turn has started even when
+                // the local process scanner has not observed it yet.
+                awaitingFreshTaskStart.remove(session.id)
+            }
         } else if session.state == .finished || session.state == .error || session.state == .disconnected {
             awaitingResponse.remove(session.id)
             awaitingFreshTaskStart.remove(session.id)
@@ -79,7 +86,7 @@ final class SessionStore: ObservableObject {
                 sameTerminal($0, process.agent, process.terminal)
             }) {
                 let previous = sessions[index]
-                let followsLocalCodexLifecycle = process.agent == .codex
+                let followsLocalAgentLifecycle = (process.agent == .codex || process.agent == .claude)
                     && ![.needsApproval, .hasQuestion, .error, .disconnected].contains(previous.state)
                 let session: AgentSession
                 let didComplete: Bool
@@ -111,7 +118,7 @@ final class SessionStore: ObservableObject {
                     waiting.updatedAt = now
                     sessions[index] = waiting
                     continue
-                } else if previous.agentSessionID.hasPrefix("process-") || followsLocalCodexLifecycle {
+                } else if previous.agentSessionID.hasPrefix("process-") || followsLocalAgentLifecycle {
                     let reduction = SessionDiscoveryReducer.reduce(
                         existing: previous,
                         cwd: process.cwd,
@@ -125,10 +132,9 @@ final class SessionStore: ObservableObject {
                     session = reduction.session
                     didComplete = reduction.didCompleteMainTurn
                 } else {
-                    // Claude's hook lifecycle remains authoritative, but its
-                    // local session metadata can still refresh a renamed
-                    // conversation or a model change without producing a
-                    // duplicate process-discovery row.
+                    // Interactive hook states remain authoritative. Local
+                    // metadata can still refresh labels without dismissing an
+                    // approval or question that is waiting for the user.
                     var refreshed = previous
                     refreshed.cwd = process.cwd
                     refreshed.projectName = URL(fileURLWithPath: process.cwd).lastPathComponent

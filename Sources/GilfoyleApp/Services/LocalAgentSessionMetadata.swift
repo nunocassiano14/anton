@@ -1,8 +1,9 @@
 import Foundation
 import GilfoyleCore
 
-/// Reads only local session indexes needed for labels/model metadata. It never
-/// sends them anywhere and deliberately does not read prompt or response text.
+/// Reads bounded local session metadata needed for labels, lifecycle state,
+/// and the latest response preview. The data remains on-device; prompts and
+/// transcript paths are never forwarded through Anton's bridge.
 struct LocalAgentSessionMetadata {
     var name: String?
     var model: String?
@@ -62,12 +63,27 @@ struct LocalAgentSessionMetadata {
         else {
             return LocalAgentSessionMetadata()
         }
+        let transcript = claudeTranscriptData(sessionID: live.sessionID)
+        let lifecycle = ClaudeTranscriptLifecycle.snapshot(in: transcript)
+        let state: AgentSessionState
+        if live.status.lowercased() == "busy" {
+            state = .working
+        } else if lifecycle.hasCompletedLatestTurn {
+            state = .finished
+        } else if lifecycle.lastUserAt != nil {
+            state = .working
+        } else {
+            state = .idle
+        }
         return LocalAgentSessionMetadata(
             name: live.name,
             model: modelFromClaudeLog(sessionID: live.sessionID),
             cwd: live.cwd,
-            lastResponsePreview: responseFromClaudeLog(sessionID: live.sessionID),
-            state: live.status.lowercased() == "busy" ? .working : .idle
+            lastResponsePreview: LocalAgentResponsePreview.claude(in: transcript),
+            state: state,
+            taskTurnID: lifecycle.lastUserTurnID,
+            taskStartedAt: lifecycle.lastUserAt,
+            activity: state == .working ? "Thinking" : nil
         )
     }
 
@@ -245,15 +261,15 @@ struct LocalAgentSessionMetadata {
             ?? lastModel(in: url)
     }
 
-    private static func responseFromClaudeLog(sessionID: String) -> String? {
+    private static func claudeTranscriptData(sessionID: String) -> Data {
         let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects")
         guard let url = firstFile(named: "\(sessionID).jsonl", below: root),
               let handle = try? FileHandle(forReadingFrom: url)
-        else { return nil }
+        else { return Data() }
         defer { try? handle.close() }
         let length = (try? handle.seekToEnd()) ?? 0
         try? handle.seek(toOffset: length > 524_288 ? length - 524_288 : 0)
-        return LocalAgentResponsePreview.claude(in: handle.readDataToEndOfFile())
+        return handle.readDataToEndOfFile()
     }
 
     private static func modelFromCodexLog(sessionID: String) -> String? {

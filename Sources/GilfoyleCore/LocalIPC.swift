@@ -4,6 +4,7 @@ import Security
 
 public enum LocalIPCError: LocalizedError {
     case invalidSocketPath
+    case socketAlreadyInUse
     case systemCall(String, Int32)
     case connectionClosed
     case invalidResponse
@@ -13,6 +14,8 @@ public enum LocalIPCError: LocalizedError {
         switch self {
         case .invalidSocketPath:
             return "The local socket path is too long."
+        case .socketAlreadyInUse:
+            return "Another Anton process already owns the local bridge."
         case .systemCall(let name, let code):
             return "\(name) failed: \(String(cString: strerror(code)))"
         case .connectionClosed:
@@ -128,6 +131,7 @@ public final class UnixSocketServer {
     private let decoder: JSONDecoder
     private let lock = NSLock()
     private var listenerFD: Int32 = -1
+    private var socketIdentity: SocketFileIdentity?
     private var running = false
     private var token = ""
     private var requestHandler: RequestHandler?
@@ -158,13 +162,14 @@ public final class UnixSocketServer {
             at: socketURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        unlink(socketURL.path)
+        try prepareSocketPath()
 
         let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else {
             throw LocalIPCError.systemCall("socket", errno)
         }
 
+        var boundIdentity: SocketFileIdentity?
         do {
             configureNoSIGPIPE(fd)
             var address = try unixAddress(for: socketURL.path)
@@ -177,6 +182,7 @@ public final class UnixSocketServer {
             guard bindResult == 0 else {
                 throw LocalIPCError.systemCall("bind", errno)
             }
+            boundIdentity = try identityOfSocket(at: socketURL.path)
             guard Darwin.chmod(socketURL.path, 0o600) == 0 else {
                 throw LocalIPCError.systemCall("chmod", errno)
             }
@@ -185,13 +191,14 @@ public final class UnixSocketServer {
             }
         } catch {
             Darwin.close(fd)
-            unlink(socketURL.path)
+            unlinkSocketIfOwned(boundIdentity, at: socketURL.path)
             throw error
         }
 
         self.token = token
         self.requestHandler = handler
         self.listenerFD = fd
+        self.socketIdentity = boundIdentity
         self.running = true
         queue.async { [weak self] in self?.acceptLoop() }
     }
@@ -199,7 +206,10 @@ public final class UnixSocketServer {
     public func stop() {
         lock.lock()
         let fd = listenerFD
+        let ownedSocketIdentity = socketIdentity
+        let wasRunning = running
         listenerFD = -1
+        socketIdentity = nil
         running = false
         requestHandler = nil
         lock.unlock()
@@ -208,7 +218,32 @@ public final class UnixSocketServer {
             Darwin.shutdown(fd, SHUT_RDWR)
             Darwin.close(fd)
         }
-        unlink(socketURL.path)
+        if wasRunning {
+            unlinkSocketIfOwned(ownedSocketIdentity, at: socketURL.path)
+        }
+    }
+
+    /// A crashed process can leave a stale filesystem entry behind. Probe it
+    /// before removal so a second Anton instance can never unlink the socket
+    /// belonging to the healthy supervised process.
+    private func prepareSocketPath() throws {
+        guard let existing = socketFileIdentity(at: socketURL.path) else { return }
+        let probe = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        guard probe >= 0 else {
+            throw LocalIPCError.systemCall("socket", errno)
+        }
+        defer { Darwin.close(probe) }
+        var address = try unixAddress(for: socketURL.path)
+        let addressLength = unixAddressLength(for: socketURL.path)
+        let result = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(probe, $0, addressLength)
+            }
+        }
+        if result == 0 {
+            throw LocalIPCError.socketAlreadyInUse
+        }
+        unlinkSocketIfOwned(existing, at: socketURL.path)
     }
 
     private func acceptLoop() {
@@ -396,7 +431,35 @@ private func constantTimeEqual(_ lhs: String, _ rhs: String) -> Bool {
     return difference == 0
 }
 
-private func unlink(_ path: String) {
+private struct SocketFileIdentity: Equatable {
+    let device: dev_t
+    let inode: ino_t
+}
+
+private func socketFileIdentity(at path: String) -> SocketFileIdentity? {
+    var information = stat()
+    let result = path.withCString { pointer in
+        Darwin.lstat(pointer, &information)
+    }
+    guard result == 0 else { return nil }
+    return SocketFileIdentity(
+        device: information.st_dev,
+        inode: information.st_ino
+    )
+}
+
+private func identityOfSocket(at path: String) throws -> SocketFileIdentity {
+    if let identity = socketFileIdentity(at: path) {
+        return identity
+    }
+    throw LocalIPCError.systemCall("lstat", errno)
+}
+
+private func unlinkSocketIfOwned(
+    _ identity: SocketFileIdentity?,
+    at path: String
+) {
+    guard let identity, socketFileIdentity(at: path) == identity else { return }
     path.withCString { pointer in
         _ = Darwin.unlink(pointer)
     }

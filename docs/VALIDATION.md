@@ -16,6 +16,8 @@ Current coverage:
 - Structured question decoding
 - Sparse terminal identity merging
 - Prompt and transcript-field exclusion
+- Claude Stop response recovery without forwarding its transcript path
+- Claude latest-turn completion detection from local transcript boundaries
 - Current approval context retention
 - Claude approval response schema
 - Claude question answer injection
@@ -31,6 +33,7 @@ Current coverage:
 - Codex hook creation and clean removal
 - Authenticated Unix-socket round trip and `0600` permissions
 - Invalid-token rejection before the application handler
+- Duplicate startup rejection without unlinking the supervised IPC socket
 
 The same core behavior is represented in Swift Testing files under `Tests/GilfoyleCoreTests`.
 

@@ -109,12 +109,14 @@ public enum SessionReducer {
             session.interaction = nil
             session.completedAt = now
             session.lastResponsePreview = preview(request.event.lastAssistantMessage)
+                ?? session.lastResponsePreview
             didCompleteMainTurn = true
 
         case "StopFailure":
             session.state = .error
             session.currentActivity = request.event.error ?? "Agent error"
             session.lastResponsePreview = preview(request.event.lastAssistantMessage)
+                ?? session.lastResponsePreview
             session.interaction = nil
 
         case "SessionEnd":

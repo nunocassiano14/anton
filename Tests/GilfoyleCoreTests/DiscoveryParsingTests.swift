@@ -135,4 +135,40 @@ struct DiscoveryParsingTests {
         #expect(reduction.session.lastResponsePreview?.contains("## Result\n\n- First item") == true)
         #expect((reduction.session.lastResponsePreview?.count ?? 0) > 220)
     }
+
+    @Test("Claude transcript completion belongs to the latest user turn")
+    func claudeTranscriptTracksLatestTurn() {
+        let completed = Data(
+            """
+            {"type":"user","uuid":"turn-1","timestamp":"2026-07-26T20:32:41.642Z","message":{"role":"user","content":"go"}}
+            {"type":"assistant","uuid":"thinking","timestamp":"2026-07-26T20:32:47.505Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"..."}]}}
+            {"type":"assistant","uuid":"reply","timestamp":"2026-07-26T20:32:50.946Z","message":{"role":"assistant","content":[{"type":"text","text":"Done"}]}}
+            """.utf8
+        )
+        let completedSnapshot = ClaudeTranscriptLifecycle.snapshot(in: completed)
+        #expect(completedSnapshot.lastUserTurnID == "turn-1")
+        #expect(completedSnapshot.hasCompletedLatestTurn)
+        #expect(
+            completedSnapshot.lastUserAt
+                == ISO8601DateFormatter.antonTest.date(from: "2026-07-26T20:32:41.642Z")
+        )
+
+        let waiting = Data(
+            """
+            {"type":"assistant","uuid":"old","timestamp":"2026-07-26T20:32:50.946Z","message":{"role":"assistant","content":[{"type":"text","text":"Old reply"}]}}
+            {"type":"user","uuid":"turn-2","timestamp":"2026-07-26T20:33:41.642Z","message":{"role":"user","content":"new prompt"}}
+            """.utf8
+        )
+        let waitingSnapshot = ClaudeTranscriptLifecycle.snapshot(in: waiting)
+        #expect(waitingSnapshot.lastUserTurnID == "turn-2")
+        #expect(!waitingSnapshot.hasCompletedLatestTurn)
+    }
+}
+
+private extension ISO8601DateFormatter {
+    static var antonTest: ISO8601DateFormatter {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }
 }

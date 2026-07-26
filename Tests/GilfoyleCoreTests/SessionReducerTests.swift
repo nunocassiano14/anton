@@ -49,6 +49,25 @@ struct SessionReducerTests {
         #expect(reduction.session.state != .finished)
     }
 
+    @Test("Stop without embedded text keeps the response already recovered locally")
+    func sparseStopPreservesRecoveredResponse() {
+        var existing = AgentSession(
+            agent: .claude,
+            agentSessionID: "session",
+            cwd: "/tmp/project",
+            state: .working
+        )
+        existing.lastResponsePreview = "Recovered from Claude transcript"
+
+        let reduction = SessionReducer.reduce(
+            existing: existing,
+            request: request(event: "Stop")
+        )
+
+        #expect(reduction.session.state == .finished)
+        #expect(reduction.session.lastResponsePreview == "Recovered from Claude transcript")
+    }
+
     @Test("Claude multiple-choice questions are structured")
     func claudeQuestionIsStructured() {
         let input: JSONValue = .object([

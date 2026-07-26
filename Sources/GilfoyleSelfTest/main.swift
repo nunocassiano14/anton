@@ -441,6 +441,27 @@ runner.run("Local agent response previews use the latest assistant reply") {
     try runner.require(LocalAgentResponsePreview.claude(in: claude) == "Claude result ready", "Claude completion preview must be shown")
 }
 
+runner.run("Claude transcript lifecycle follows the latest user turn") {
+    let completed = Data(
+        """
+        {"type":"user","uuid":"turn-1","timestamp":"2026-07-26T20:32:41.642Z","message":{"role":"user","content":"go"}}
+        {"type":"assistant","uuid":"reply","timestamp":"2026-07-26T20:32:50.946Z","message":{"role":"assistant","content":[{"type":"text","text":"Done"}]}}
+        """.utf8
+    )
+    let completedSnapshot = ClaudeTranscriptLifecycle.snapshot(in: completed)
+    try runner.require(completedSnapshot.lastUserTurnID == "turn-1", "Claude turn identity must be retained")
+    try runner.require(completedSnapshot.hasCompletedLatestTurn, "A later assistant response must complete the current Claude turn")
+
+    let waiting = Data(
+        """
+        {"type":"assistant","uuid":"old","timestamp":"2026-07-26T20:32:50.946Z","message":{"role":"assistant","content":[{"type":"text","text":"Old reply"}]}}
+        {"type":"user","uuid":"turn-2","timestamp":"2026-07-26T20:33:41.642Z","message":{"role":"user","content":"new prompt"}}
+        """.utf8
+    )
+    let waitingSnapshot = ClaudeTranscriptLifecycle.snapshot(in: waiting)
+    try runner.require(!waitingSnapshot.hasCompletedLatestTurn, "An old response must not complete a newer Claude prompt")
+}
+
 runner.run("Local discovery completion updates the live session once") {
     let terminal = TerminalContext(kind: .terminal, tty: "/dev/ttys007", processID: 777)
     let session = AgentSession(
@@ -567,6 +588,40 @@ runner.run("private prompt and transcript fields are never forwarded") {
     try runner.require(!text.contains("TOP SECRET"), "Prompt leaked into IPC")
     try runner.require(!text.contains("private-transcript"), "Transcript path leaked into IPC")
     try runner.require(parsed.event.toolInput == nil, "Non-interactive tool input must be omitted")
+}
+
+runner.run("Claude Stop recovers its response without forwarding the transcript path") {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("AntonClaudeStop-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let transcript = directory.appendingPathComponent("session.jsonl")
+    try Data(
+        """
+        {"type":"user","uuid":"turn","timestamp":"2026-07-26T20:32:41.642Z","message":{"role":"user","content":"private prompt"}}
+        {"type":"assistant","uuid":"reply","timestamp":"2026-07-26T20:32:50.946Z","message":{"role":"assistant","content":[{"type":"text","text":"Recovered Claude response"}]}}
+        """.utf8
+    ).write(to: transcript)
+    let input = try JSONSerialization.data(
+        withJSONObject: [
+            "hook_event_name": "Stop",
+            "session_id": "session",
+            "cwd": "/tmp/project",
+            "transcript_path": transcript.path
+        ]
+    )
+    let parsed = try ClaudeLifecycleAdapter().decode(
+        data: input,
+        terminal: TerminalContext(kind: .terminal),
+        token: "token"
+    )
+    let encoded = String(decoding: try JSONEncoder().encode(parsed), as: UTF8.self)
+    try runner.require(
+        parsed.event.lastAssistantMessage == "Recovered Claude response",
+        "Claude's omitted Stop response must be recovered"
+    )
+    try runner.require(!encoded.contains(transcript.path), "Claude transcript path leaked into IPC")
+    try runner.require(!encoded.contains("private prompt"), "Claude prompt leaked into IPC")
 }
 
 runner.run("current approval input is retained") {
@@ -1253,6 +1308,41 @@ runner.run("invalid IPC token is rejected before the app handler") {
     let response = try UnixSocketClient(socketURL: socketURL).send(bridgeRequest)
     try runner.require(response.decision == .deny, "Invalid token must be denied")
     try runner.require(!called.value, "Application handler saw an unauthenticated request")
+}
+
+runner.run("duplicate startup cannot unlink or steal the live IPC socket") {
+    let folder = try temporaryIPCFolder()
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let socketURL = folder.appendingPathComponent("bridge.sock")
+    let live = UnixSocketServer(socketURL: socketURL)
+    defer { live.stop() }
+    try live.start(token: "token") { request, respond in
+        respond(BridgeResponse(requestID: request.requestID, decision: .acknowledge))
+    }
+
+    let duplicate = UnixSocketServer(socketURL: socketURL)
+    duplicate.stop()
+    var duplicateWasRejected = false
+    do {
+        try duplicate.start(token: "other") { _, _ in }
+    } catch {
+        duplicateWasRejected = true
+    }
+    duplicate.stop()
+    try runner.require(duplicateWasRejected, "A duplicate Anton process stole the active socket")
+
+    let request = BridgeRequest(
+        token: "token",
+        agent: .claude,
+        event: HookEventPayload(
+            name: "SessionStart",
+            sessionID: "session",
+            cwd: "/tmp/project"
+        ),
+        terminal: TerminalContext()
+    )
+    let response = try UnixSocketClient(socketURL: socketURL).send(request)
+    try runner.require(response.decision == .acknowledge, "The original IPC bridge was unlinked")
 }
 
 runner.finish()

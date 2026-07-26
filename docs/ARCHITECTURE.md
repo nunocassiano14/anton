@@ -49,7 +49,9 @@ The helper is invoked directly by official Claude Code and Codex command hooks. 
 2. Selects the Claude or Codex lifecycle adapter from `--agent`.
 3. Determines Terminal versus iTerm from environment metadata.
 4. Walks the parent process chain to recover a TTY and the agent process ID.
-5. Drops prompt and transcript fields before creating a `BridgeRequest`.
+5. Drops prompt and transcript fields before creating a `BridgeRequest`. For a
+   Claude Stop that omits the final message, it first resolves only the latest
+   assistant preview from a bounded tail of the referenced local transcript.
 6. Loads the per-user IPC token.
 7. sends one newline-delimited JSON request through the private Unix socket.
 8. Waits for a response only when an approval or question is interactive.
@@ -68,6 +70,11 @@ The app uses:
 - Carbon hot keys for the `⌥⌘G` global shortcut
 - Apple Events through `osascript` for exact Terminal/iTerm handoff
 - A per-user launchd agent for login startup and abnormal-exit recovery
+
+The socket server records the device/inode of the bridge path it owns. An
+unstarted or superseded Anton process cannot unlink that path during shutdown,
+and a second live instance is rejected before it can replace the supervised
+bridge. A stale socket left by a crash is probed and removed safely.
 - `DispatchSourceProcess` to detect unexpected agent exit without polling
 - A cached five-second local discovery fallback for sessions opened before hooks
 
@@ -157,6 +164,7 @@ Memory only:
 - Session board
 - Current activity and last action
 - A sanitized local Codex activity label derived from the latest tool call
+- A bounded Claude transcript snapshot used to recover the latest turn state
 - Current response preview
 - Current approval/question
 - Pending reply text

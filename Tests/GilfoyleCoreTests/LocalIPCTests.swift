@@ -71,4 +71,64 @@ struct LocalIPCTests {
         #expect(response.decision == .deny)
         #expect(!handlerCalled)
     }
+
+    @Test("Stopping an unstarted duplicate cannot remove the live bridge")
+    func unstartedDuplicateCannotRemoveLiveBridge() throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("gf-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let socketURL = folder.appendingPathComponent("bridge.sock")
+        let live = UnixSocketServer(socketURL: socketURL)
+        defer { live.stop() }
+        try live.start(token: "token") { request, respond in
+            respond(BridgeResponse(requestID: request.requestID, decision: .acknowledge))
+        }
+
+        let duplicate = UnixSocketServer(socketURL: socketURL)
+        duplicate.stop()
+
+        let response = try UnixSocketClient(socketURL: socketURL).send(
+            request(token: "token")
+        )
+        #expect(response.decision == .acknowledge)
+    }
+
+    @Test("A duplicate server cannot steal an active bridge path")
+    func duplicateServerCannotStealActiveBridge() throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("gf-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let socketURL = folder.appendingPathComponent("bridge.sock")
+        let live = UnixSocketServer(socketURL: socketURL)
+        defer { live.stop() }
+        try live.start(token: "token") { request, respond in
+            respond(BridgeResponse(requestID: request.requestID, decision: .acknowledge))
+        }
+
+        let duplicate = UnixSocketServer(socketURL: socketURL)
+        #expect(throws: LocalIPCError.self) {
+            try duplicate.start(token: "other") { _, _ in }
+        }
+        duplicate.stop()
+
+        let response = try UnixSocketClient(socketURL: socketURL).send(
+            request(token: "token")
+        )
+        #expect(response.decision == .acknowledge)
+    }
+
+    private func request(token: String) -> BridgeRequest {
+        BridgeRequest(
+            token: token,
+            agent: .claude,
+            event: HookEventPayload(
+                name: "SessionStart",
+                sessionID: "session",
+                cwd: "/tmp/project"
+            ),
+            terminal: TerminalContext()
+        )
+    }
 }

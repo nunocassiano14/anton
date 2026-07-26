@@ -25,12 +25,17 @@ The app receives only the current structured lifecycle event needed to render a 
 - The latest assistant preview on a main Stop event
 - The current tool input only for an approval or structured question
 
-The helper excludes the prompt and transcript path even when the agent includes them on standard input. Normal tool inputs are excluded because the live board does not need them.
+The helper excludes the prompt and transcript path from the bridge request even
+when the agent includes them on standard input. If a Claude Stop omits its
+final message, the helper reads a bounded local transcript tail and extracts
+only the latest assistant preview. Normal tool inputs are excluded because the
+live board does not need them.
 
-For already-open Codex sessions, Anton also reads a bounded tail of Codex's
-local rollout file. It derives a short live label such as `Searching the web`,
+For already-open sessions, Anton also reads bounded tails of Codex's local
+rollout and Claude's local transcript. It derives lifecycle state, the latest
+response preview, and a short safe activity label such as `Searching the web`,
 `Running tests`, or `Reading NotchRootView.swift`. Raw commands, tool output,
-prompts, and response text are not retained as activity metadata and never
+prompts, and full transcripts are not retained as activity metadata and never
 leave the Mac.
 
 ## Data stored
@@ -58,4 +63,6 @@ Anton reads and minimally patches:
 - `~/.claude/settings.json`
 - `~/.codex/hooks.json`
 
-It does not read transcript files referenced by hook events. Existing configuration is backed up before material changes, and removal is selective.
+Transcript access is read-only, bounded, and used only for the latest local
+Claude response/lifecycle fallback described above. Existing configuration is
+backed up before material changes, and removal is selective.
