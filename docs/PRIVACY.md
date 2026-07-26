@@ -27,6 +27,12 @@ The app receives only the current structured lifecycle event needed to render a 
 
 The helper excludes the prompt and transcript path even when the agent includes them on standard input. Normal tool inputs are excluded because the live board does not need them.
 
+For already-open Codex sessions, Anton also reads a bounded tail of Codex's
+local rollout file. It derives a short live label such as `Searching the web`,
+`Running tests`, or `Reading NotchRootView.swift`. Raw commands, tool output,
+prompts, and response text are not retained as activity metadata and never
+leave the Mac.
+
 ## Data stored
 
 The session board and current interactions stay in memory and disappear when Anton quits.

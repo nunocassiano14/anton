@@ -11,6 +11,7 @@ struct LocalAgentSessionMetadata {
     var state: AgentSessionState = .idle
     var taskTurnID: String?
     var taskStartedAt: Date?
+    var activity: String?
 
     private struct CachedCodexSession {
         let value: (id: String, rolloutURL: URL)?
@@ -49,7 +50,8 @@ struct LocalAgentSessionMetadata {
                 lastResponsePreview: LocalAgentResponsePreview.codex(in: rollout),
                 state: lifecycle.state,
                 taskTurnID: lifecycle.turnID,
-                taskStartedAt: lifecycle.taskStartedAt
+                taskStartedAt: lifecycle.taskStartedAt,
+                activity: lifecycle.activity
             )
         }
         guard agent == .claude else { return LocalAgentSessionMetadata() }

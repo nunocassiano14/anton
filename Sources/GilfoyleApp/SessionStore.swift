@@ -118,6 +118,7 @@ final class SessionStore: ObservableObject {
                         sessionName: process.sessionName,
                         model: process.model,
                         lastResponsePreview: process.lastResponsePreview,
+                        observedActivity: process.activity,
                         state: process.state,
                         now: now
                     )
@@ -134,6 +135,7 @@ final class SessionStore: ObservableObject {
                     refreshed.sessionName = process.sessionName ?? previous.sessionName
                     refreshed.model = process.model ?? previous.model
                     refreshed.lastResponsePreview = process.lastResponsePreview ?? previous.lastResponsePreview
+                    refreshed.currentActivity = process.activity ?? previous.currentActivity
                     refreshed.updatedAt = now
                     session = refreshed
                     didComplete = false
@@ -159,7 +161,8 @@ final class SessionStore: ObservableObject {
                 terminal: process.terminal
             )
             session.lastResponsePreview = process.lastResponsePreview
-            session.currentActivity = SessionDiscoveryReducer.activity(for: process.state)
+            session.currentActivity = process.activity
+                ?? SessionDiscoveryReducer.activity(for: process.state)
             upsert(session)
             if let turnID = process.taskTurnID {
                 latestTaskTurnID[session.id] = turnID

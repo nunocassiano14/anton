@@ -9,6 +9,7 @@ public enum SessionDiscoveryReducer {
         sessionName: String?,
         model: String?,
         lastResponsePreview: String? = nil,
+        observedActivity: String? = nil,
         state: AgentSessionState,
         now: Date = Date()
     ) -> (session: AgentSession, didCompleteMainTurn: Bool) {
@@ -20,7 +21,7 @@ public enum SessionDiscoveryReducer {
         session.model = model ?? existing.model
         session.lastResponsePreview = lastResponsePreview ?? existing.lastResponsePreview
         session.state = state
-        session.currentActivity = activity(for: state)
+        session.currentActivity = observedActivity ?? activity(for: state)
         session.updatedAt = now
         if didComplete { session.completedAt = now }
         return (session, didComplete)

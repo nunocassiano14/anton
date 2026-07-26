@@ -249,6 +249,42 @@ runner.run("Codex lifecycle retains turn identity for fast completions") {
     )
 }
 
+runner.run("Codex rollout exposes useful tool activity without command text") {
+    let web = Data(
+        #"""
+        {"type":"event_msg","payload":{"type":"task_started","turn_id":"turn"}}
+        {"type":"response_item","payload":{"type":"function_call","name":"run","arguments":"{\"search_query\":[{\"q\":\"status\"}]}"}}
+        """#.utf8
+    )
+    try runner.require(
+        CodexRolloutLifecycle.snapshot(in: web).activity == "Searching the web",
+        "Web search should be visible as the live activity"
+    )
+
+    let file = Data(
+        #"""
+        {"type":"event_msg","payload":{"type":"task_started","turn_id":"turn"}}
+        {"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"sed -n '1,120p' Sources/App/NotchRootView.swift\"}"}}
+        """#.utf8
+    )
+    try runner.require(
+        CodexRolloutLifecycle.snapshot(in: file).activity == "Reading NotchRootView.swift",
+        "File reads should expose only the filename"
+    )
+
+    let completed = Data(
+        #"""
+        {"type":"event_msg","payload":{"type":"task_started","turn_id":"turn"}}
+        {"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","input":"redacted"}}
+        {"type":"event_msg","payload":{"type":"task_complete","turn_id":"turn"}}
+        """#.utf8
+    )
+    try runner.require(
+        CodexRolloutLifecycle.snapshot(in: completed).activity == "Response ready",
+        "Completion must supersede an older tool activity"
+    )
+}
+
 runner.run("Duplicate TTY inventory rows keep the latest value") {
     let inventory = TerminalInventoryParser.parse(
         terminalLines: [

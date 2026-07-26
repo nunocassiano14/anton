@@ -114,6 +114,11 @@ final class NotchPanelController: NSWindowController {
         window?.resignKey()
     }
 
+    func refreshCompactFrame() {
+        guard controller?.isExpanded == false else { return }
+        updateFrame(expanded: false, animated: true)
+    }
+
     func setExpanded(_ expanded: Bool) {
         // Opening the board or a callout is still passive. The panel becomes
         // key only through `focusForExplicitReply`, after the user selected
@@ -170,14 +175,19 @@ final class NotchPanelController: NSWindowController {
 
     private func updateFrame(expanded: Bool, animated: Bool) {
         guard let window, let screen = primaryScreen() else { return }
-        // The compact board now carries a live state summary (for example
-        // “1 working · 3 idle”), not merely a tiny counter. Keep generous
-        // horizontal breathing room around the physical camera so that this
-        // context never truncates or slips behind the housing.
         // The board is a working surface: wider rows preserve full agent
         // replies, Markdown tables and the reply controls without forcing
         // every useful line into a narrow column under the camera.
-        let width: CGFloat = expanded ? min(820, screen.visibleFrame.width - 48) : min(520, screen.visibleFrame.width - 48)
+        let width: CGFloat
+        let originX: CGFloat
+        if expanded {
+            width = min(820, screen.visibleFrame.width - 48)
+            originX = screen.frame.midX - width / 2
+        } else {
+            let geometry = compactGeometry(for: screen)
+            width = geometry.width
+            originX = geometry.minX
+        }
         let height: CGFloat
         if !expanded {
             height = max(46, screen.safeAreaInsets.top + 14)
@@ -192,12 +202,48 @@ final class NotchPanelController: NSWindowController {
             height = min(780, screen.visibleFrame.height - 50)
         }
         let frame = NSRect(
-            x: screen.frame.midX - width / 2,
+            x: originX,
             y: screen.frame.maxY - height,
             width: width,
             height: height
         )
         window.setFrame(frame, display: true, animate: animated)
+    }
+
+    /// Keep the camera housing covered while sizing its two wings
+    /// independently: a short Anton wing on the left, and only as much room
+    /// as the live agent cluster needs on the right.
+    private func compactGeometry(for screen: NSScreen) -> (minX: CGFloat, width: CGFloat) {
+        let cameraMinX: CGFloat
+        let cameraMaxX: CGFloat
+        if let leftArea = screen.auxiliaryTopLeftArea,
+           let rightArea = screen.auxiliaryTopRightArea,
+           rightArea.minX > leftArea.maxX
+        {
+            cameraMinX = leftArea.maxX
+            cameraMaxX = rightArea.minX
+        } else {
+            // External displays have no physical housing. Preserve the same
+            // visual centre gap so the surface keeps its notch silhouette.
+            cameraMinX = screen.frame.midX - 75
+            cameraMaxX = screen.frame.midX + 75
+        }
+
+        let totalCount = controller?.sessionStore.sessions.count ?? 0
+        let visibleCount = controller?.compactVisibleSessionCount ?? 0
+        let glyphsWidth: CGFloat = visibleCount == 0
+            ? 0
+            : CGFloat(visibleCount * 21 + max(0, visibleCount - 1) * 6)
+        let overflowWidth: CGFloat = totalCount > visibleCount ? 28 : 0
+        let antonWing: CGFloat = 55
+        let agentsWing = max(antonWing, 28 + glyphsWidth + overflowWidth)
+        let width = antonWing + (cameraMaxX - cameraMinX) + agentsWing
+        let unclampedMinX = cameraMinX - antonWing
+        let minX = min(
+            max(unclampedMinX, screen.frame.minX + 24),
+            screen.frame.maxX - 24 - width
+        )
+        return (minX, width)
     }
 
     private func primaryScreen() -> NSScreen? {

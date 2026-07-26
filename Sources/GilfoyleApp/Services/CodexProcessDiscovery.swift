@@ -15,6 +15,7 @@ struct DiscoveredAgentSession: Sendable {
     let state: AgentSessionState
     let taskTurnID: String?
     let taskStartedAt: Date?
+    let activity: String?
     let terminal: TerminalContext
 }
 
@@ -148,6 +149,7 @@ final class CodingAgentProcessDiscovery {
                 state: metadata.state,
                 taskTurnID: metadata.taskTurnID,
                 taskStartedAt: metadata.taskStartedAt,
+                activity: metadata.activity,
                 terminal: terminal
             )
         }

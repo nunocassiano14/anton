@@ -33,6 +33,11 @@ final class AppController: ObservableObject {
         return min(532, max(256, 218 + responseHeight) + calloutAccessoryHeight)
     }
 
+    var compactVisibleSessionCount: Int {
+        let count = sessionStore.sessions.count
+        return count >= 6 ? 4 : count
+    }
+
     private let socketServer = UnixSocketServer()
     private let terminalAutomation: any TerminalSessionControlling
     private let processMonitor = SessionProcessMonitor()
@@ -61,6 +66,15 @@ final class AppController: ObservableObject {
         shortcutManager.action = { [weak self] in
             self?.togglePanel()
         }
+
+        sessionStore.$sessions
+            .map(\.count)
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                guard let self, !self.isExpanded else { return }
+                self.panelController?.refreshCompactFrame()
+            }
+            .store(in: &cancellables)
     }
 
     func start() {

@@ -156,6 +156,7 @@ Memory only:
 
 - Session board
 - Current activity and last action
+- A sanitized local Codex activity label derived from the latest tool call
 - Current response preview
 - Current approval/question
 - Pending reply text
@@ -163,5 +164,6 @@ Memory only:
 Explicitly discarded:
 
 - User prompt content from lifecycle events
+- Raw local command text and tool output
 - Transcript paths
 - Tool inputs not required for the current approval or question

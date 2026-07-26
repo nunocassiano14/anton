@@ -79,6 +79,34 @@ struct DiscoveryParsingTests {
         #expect(snapshot.taskStartedAt == Date(timeIntervalSince1970: 200))
     }
 
+    @Test("Codex snapshots expose a safe, useful current activity")
+    func codexSnapshotDescribesCurrentTool() {
+        let web = Data(
+            #"""
+            {"type":"event_msg","payload":{"type":"task_started","turn_id":"turn"}}
+            {"type":"response_item","payload":{"type":"function_call","name":"run","arguments":"{\"search_query\":[{\"q\":\"status\"}]}"}}
+            """#.utf8
+        )
+        #expect(CodexRolloutLifecycle.snapshot(in: web).activity == "Searching the web")
+
+        let file = Data(
+            #"""
+            {"type":"event_msg","payload":{"type":"task_started","turn_id":"turn"}}
+            {"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"sed -n '1,120p' Sources/App/NotchRootView.swift\"}"}}
+            """#.utf8
+        )
+        #expect(CodexRolloutLifecycle.snapshot(in: file).activity == "Reading NotchRootView.swift")
+
+        let completed = Data(
+            #"""
+            {"type":"event_msg","payload":{"type":"task_started","turn_id":"turn"}}
+            {"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","input":"redacted"}}
+            {"type":"event_msg","payload":{"type":"task_complete","turn_id":"turn"}}
+            """#.utf8
+        )
+        #expect(CodexRolloutLifecycle.snapshot(in: completed).activity == "Response ready")
+    }
+
     @Test("Response previews preserve Markdown and useful length")
     func responsePreviewPreservesMarkdown() {
         let message = """

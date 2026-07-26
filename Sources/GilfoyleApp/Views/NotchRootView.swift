@@ -104,7 +104,7 @@ struct NotchRootView: View {
                 }
             }
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 16)
         .frame(height: 46)
     }
 
@@ -382,7 +382,7 @@ struct NotchRootView: View {
     }
 
     private var compactSessions: [AgentSession] {
-        Array(store.sessions.prefix(store.sessions.count >= 6 ? 4 : store.sessions.count))
+        Array(store.sessions.prefix(controller.compactVisibleSessionCount))
     }
 
     private func compactAccessibilityLabel(for session: AgentSession) -> String {
