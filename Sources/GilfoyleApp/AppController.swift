@@ -21,7 +21,7 @@ final class AppController: ObservableObject {
     @Published private(set) var pendingCalloutCount = 0
     @Published private(set) var compactCameraWidth: CGFloat = 150
     private var calloutAccessoryHeight: CGFloat = 0
-    let compactLeadingWingWidth: CGFloat = 16
+    let compactAntonWingWidth: CGFloat = 55
 
     var preferredCalloutBodyHeight: CGFloat {
         guard let sessionID = calloutSessionID,

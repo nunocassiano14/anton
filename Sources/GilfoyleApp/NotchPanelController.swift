@@ -211,9 +211,9 @@ final class NotchPanelController: NSWindowController {
         window.setFrame(frame, display: true, animate: animated)
     }
 
-    /// Keep the camera housing covered while grouping Anton and the live
-    /// agents on its right. The left side exists only to draw a clean rounded
-    /// corner; it no longer mirrors the wider content wing.
+    /// Keep the camera housing covered while sizing its two wings
+    /// independently: the exact icon allowance for Anton on the left and only
+    /// as much room as the live agent cluster needs on the right.
     private func compactGeometry(
         for screen: NSScreen
     ) -> (minX: CGFloat, width: CGFloat, cameraWidth: CGFloat) {
@@ -238,13 +238,10 @@ final class NotchPanelController: NSWindowController {
             ? 0
             : CGFloat(visibleCount * 21 + max(0, visibleCount - 1) * 6)
         let overflowWidth: CGFloat = totalCount > visibleCount ? 28 : 0
-        let agentClusterWidth = glyphsWidth + overflowWidth
-        let leadingWing = controller?.compactLeadingWingWidth ?? 16
-        let contentWing = 12 + 23
-            + (agentClusterWidth > 0 ? 12 + agentClusterWidth : 0)
-            + 16
-        let width = leadingWing + (cameraMaxX - cameraMinX) + contentWing
-        let unclampedMinX = cameraMinX - leadingWing
+        let antonWing = controller?.compactAntonWingWidth ?? 55
+        let agentsWing = 28 + glyphsWidth + overflowWidth
+        let width = antonWing + (cameraMaxX - cameraMinX) + agentsWing
+        let unclampedMinX = cameraMinX - antonWing
         let minX = min(
             max(unclampedMinX, screen.frame.minX + 24),
             screen.frame.maxX - 24 - width
