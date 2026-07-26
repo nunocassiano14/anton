@@ -19,7 +19,9 @@ final class AppController: ObservableObject {
     @Published private(set) var codexIntegration: IntegrationStatus?
     @Published private(set) var environment = EnvironmentDetector.detect()
     @Published private(set) var pendingCalloutCount = 0
+    @Published private(set) var compactCameraWidth: CGFloat = 150
     private var calloutAccessoryHeight: CGFloat = 0
+    let compactLeadingWingWidth: CGFloat = 16
 
     var preferredCalloutBodyHeight: CGFloat {
         guard let sessionID = calloutSessionID,
@@ -36,6 +38,11 @@ final class AppController: ObservableObject {
     var compactVisibleSessionCount: Int {
         let count = sessionStore.sessions.count
         return count >= 6 ? 4 : count
+    }
+
+    func updateCompactCameraWidth(_ width: CGFloat) {
+        guard abs(compactCameraWidth - width) > 0.5 else { return }
+        compactCameraWidth = width
     }
 
     private let socketServer = UnixSocketServer()

@@ -78,33 +78,44 @@ struct NotchRootView: View {
     }
 
     private var compactContent: some View {
-        HStack(spacing: 12) {
-            AntonMark(size: 23, glows: true, compactAnimation: true)
+        HStack(spacing: 0) {
+            Color.clear
+                .frame(width: controller.compactLeadingWingWidth, height: 46)
 
-            Spacer()
+            // This empty region is the actual camera housing.
+            Color.clear
+                .frame(width: controller.compactCameraWidth, height: 46)
 
-            HStack(spacing: 6) {
-                ForEach(compactSessions, id: \.id) { session in
-                    AgentPixelGlyph(
-                        agent: session.agent,
-                        state: session.state,
-                        animationSeed: session.id
-                    )
-                    .frame(width: 21, height: 21)
-                    // Working is the only high-energy signal in compact
-                    // mode. Ready, idle and attention states remain visible
-                    // by agent colour, but recede until they need opening.
-                    .opacity(session.state == .working ? 1 : 0.34)
-                    .accessibilityLabel(compactAccessibilityLabel(for: session))
-                }
-                if store.sessions.count > compactSessions.count {
-                    Text("+\(store.sessions.count - compactSessions.count)")
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.42))
+            HStack(spacing: 12) {
+                AntonMark(size: 23, glows: true, compactAnimation: true)
+
+                if !compactSessions.isEmpty {
+                    HStack(spacing: 6) {
+                        ForEach(compactSessions, id: \.id) { session in
+                            AgentPixelGlyph(
+                                agent: session.agent,
+                                state: session.state,
+                                animationSeed: session.id
+                            )
+                            .frame(width: 21, height: 21)
+                            // Working is the only high-energy signal in compact
+                            // mode. Ready, idle and attention states remain visible
+                            // by agent colour, but recede until they need opening.
+                            .opacity(session.state == .working ? 1 : 0.34)
+                            .accessibilityLabel(compactAccessibilityLabel(for: session))
+                        }
+                        if store.sessions.count > compactSessions.count {
+                            Text("+\(store.sessions.count - compactSessions.count)")
+                                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.42))
+                        }
+                    }
                 }
             }
+            .padding(.leading, 12)
+            .padding(.trailing, 16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 16)
         .frame(height: 46)
     }
 
