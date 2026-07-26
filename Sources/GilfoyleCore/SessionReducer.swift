@@ -270,10 +270,11 @@ public enum SessionReducer {
         let formatted = text
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
-            .components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .joined(separator: "\n")
-            .replacingOccurrences(of: "\n{3,}", with: "\n\n", options: .regularExpression)
+            .replacingOccurrences(
+                of: #"\n(?:[ \t]*\n){2,}"#,
+                with: "\n\n",
+                options: .regularExpression
+            )
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !formatted.isEmpty else { return nil }
         return String(formatted.prefix(8_000))

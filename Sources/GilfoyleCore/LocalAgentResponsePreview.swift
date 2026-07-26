@@ -42,9 +42,13 @@ public enum LocalAgentResponsePreview {
 
     private static func normalized(_ value: String) -> String? {
         let formatted = value
-            .components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .joined(separator: "\n")
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .replacingOccurrences(
+                of: #"\n(?:[ \t]*\n){2,}"#,
+                with: "\n\n",
+                options: .regularExpression
+            )
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return formatted.isEmpty ? nil : String(formatted.prefix(8_000))
     }

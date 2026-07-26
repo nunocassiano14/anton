@@ -704,7 +704,15 @@ final class AppController: ObservableObject {
                     sessionID: "visual-finished",
                     cwd: "/Users/example/billing-service",
                     model: "Claude Sonnet",
-                    lastAssistantMessage: "Billing empty state is polished and the focused tests pass."
+                    lastAssistantMessage: """
+                    1. First market
+                    Supporting evidence for the first market.
+
+                    2. Second market
+                    Supporting evidence for the second market.
+
+                    3. Third market
+                    """
                 ),
                 terminal: TerminalContext(
                     kind: .terminal,

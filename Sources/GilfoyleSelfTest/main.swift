@@ -661,6 +661,112 @@ runner.run("terminal routing preserves exact tab identity") {
     }
 }
 
+runner.run("background reply scripts do not request terminal focus") {
+    for script in [
+        TerminalAutomationScripts.terminalSend,
+        TerminalAutomationScripts.iTermSend
+    ] {
+        try runner.require(
+            !script.contains("activate")
+                && !script.contains("set selected")
+                && !script.contains("select terminal"),
+            "A reply script must not explicitly focus, select, or activate a terminal"
+        )
+    }
+    try runner.require(
+        TerminalAutomationScripts.terminalFocus.contains("activate")
+            && TerminalAutomationScripts.iTermFocus.contains("activate"),
+        "Only the explicit focus scripts may activate terminal applications"
+    )
+}
+
+runner.run("numbered Markdown lists keep one continuous sequence") {
+    let blocks = MarkdownBlockParser.parse(
+        """
+        1. First market
+
+           Supporting evidence for the first market.
+
+        1. Second market
+
+           Supporting evidence for the second market.
+
+        1. Third market
+        """
+    )
+    try runner.require(
+        blocks == [
+            .list(
+                [
+                    "First market\n\nSupporting evidence for the first market.",
+                    "Second market\n\nSupporting evidence for the second market.",
+                    "Third market"
+                ],
+                ordered: true,
+                start: 1
+            )
+        ],
+        "Continuation paragraphs must not reset ordered-list numbering"
+    )
+}
+
+runner.run("separate ordered Markdown blocks keep their source numbers") {
+    let blocks = MarkdownBlockParser.parse(
+        """
+        1. First market
+        Evidence for the first market.
+
+        2. Second market
+        Evidence for the second market.
+
+        3. Third market
+        """
+    )
+    try runner.require(
+        blocks == [
+            .list(["First market"], ordered: true, start: 1),
+            .text("Evidence for the first market."),
+            .list(["Second market"], ordered: true, start: 2),
+            .text("Evidence for the second market."),
+            .list(["Third market"], ordered: true, start: 3)
+        ],
+        "Each ordered block must retain the number emitted by the agent"
+    )
+}
+
+runner.run("response preview normalization preserves Markdown indentation") {
+    let message = """
+    1. First market
+
+       Supporting evidence for the first market.
+
+    1. Second market
+    """
+    let reduction = SessionReducer.reduce(
+        existing: nil,
+        request: request(agent: .codex, event: "Stop", assistantMessage: message)
+    )
+    try runner.require(
+        reduction.session.lastResponsePreview?
+            .contains("\n   Supporting evidence for the first market.") == true,
+        "The response preview must retain list-continuation indentation"
+    )
+    try runner.require(
+        MarkdownBlockParser.parse(reduction.session.lastResponsePreview ?? "")
+            == [
+                .list(
+                    [
+                        "First market\n\nSupporting evidence for the first market.",
+                        "Second market"
+                    ],
+                    ordered: true,
+                    start: 1
+                )
+            ],
+        "The normalized preview must still parse as one continuous ordered list"
+    )
+}
+
 runner.run("interaction responses route only to the matching request") {
     let broker = InteractionResponseBroker()
     var approval: BridgeResponse?

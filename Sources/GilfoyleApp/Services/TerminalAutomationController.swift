@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import GilfoyleCore
 
@@ -44,33 +45,62 @@ final class TerminalAutomationController: TerminalSessionControlling {
         text: String?,
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
+        // Terminal.app brings itself forward as a side effect of `do script`,
+        // even when the AppleScript contains no explicit `activate`. Remember
+        // the user's current app so a background reply can restore it before
+        // Anton reports that delivery has completed.
+        let foregroundApplication = action == .send
+            ? NSWorkspace.shared.frontmostApplication
+            : nil
+
+        func finish(_ result: Result<Void, Error>) {
+            DispatchQueue.main.async {
+                if action == .send,
+                   let foregroundApplication,
+                   !foregroundApplication.isTerminated
+                {
+                    foregroundApplication.activate()
+                }
+                completion(result)
+            }
+        }
+
         queue.async {
             do {
                 let result: String
                 switch try TerminalRouteResolver.resolve(session.terminal) {
                 case .terminal(let tty):
-                    result = try self.runAppleScript(
-                        Self.terminalScript,
-                        arguments: [tty, action == .send ? "send" : "focus", text ?? ""]
-                    )
+                    if action == .send {
+                        result = try self.runAppleScript(
+                            TerminalAutomationScripts.terminalSend,
+                            arguments: [tty, text ?? ""]
+                        )
+                    } else {
+                        result = try self.runAppleScript(
+                            TerminalAutomationScripts.terminalFocus,
+                            arguments: [tty]
+                        )
+                    }
                 case .iTerm(let identifier, let tty):
-                    result = try self.runAppleScript(
-                        Self.iTermScript,
-                        arguments: [
-                            identifier ?? "",
-                            tty ?? "",
-                            action == .send ? "send" : "focus",
-                            text ?? ""
-                        ]
-                    )
+                    if action == .send {
+                        result = try self.runAppleScript(
+                            TerminalAutomationScripts.iTermSend,
+                            arguments: [identifier ?? "", tty ?? "", text ?? ""]
+                        )
+                    } else {
+                        result = try self.runAppleScript(
+                            TerminalAutomationScripts.iTermFocus,
+                            arguments: [identifier ?? "", tty ?? ""]
+                        )
+                    }
                 }
 
                 guard result.trimmingCharacters(in: .whitespacesAndNewlines) == "ok" else {
                     throw TerminalAutomationError.targetNotFound
                 }
-                DispatchQueue.main.async { completion(.success(())) }
+                finish(.success(()))
             } catch {
-                DispatchQueue.main.async { completion(.failure(error)) }
+                finish(.failure(error))
             }
         }
     }
@@ -110,75 +140,4 @@ final class TerminalAutomationController: TerminalSessionControlling {
         ) ?? ""
     }
 
-    private static let terminalScript = """
-    on run argv
-        set targetTTY to item 1 of argv
-        set requestedAction to item 2 of argv
-        set promptText to item 3 of argv
-        tell application "Terminal"
-            repeat with terminalWindow in windows
-                repeat with terminalTab in tabs of terminalWindow
-                    if tty of terminalTab is targetTTY then
-                        if requestedAction is "send" then
-                            -- `do script` supplies one Return. Interactive
-                            -- TUIs can consume that first Return to finish a
-                            -- paste, so send a second empty native command.
-                            -- This avoids System Events keystrokes and their
-                            -- separate Accessibility permission.
-                            set selected of terminalTab to true
-                            set index of terminalWindow to 1
-                            activate
-                            do script promptText in terminalTab
-                            delay 0.12
-                            do script "" in terminalTab
-                            return "ok"
-                        end if
-                        set selected of terminalTab to true
-                        set index of terminalWindow to 1
-                        activate
-                        return "ok"
-                    end if
-                end repeat
-            end repeat
-        end tell
-        return "not-found"
-    end run
-    """
-
-    private static let iTermScript = """
-    on run argv
-        set targetIdentifier to item 1 of argv
-        set targetTTY to item 2 of argv
-        set requestedAction to item 3 of argv
-        set promptText to item 4 of argv
-        if targetIdentifier contains ":" then
-            set AppleScript's text item delimiters to ":"
-            set identifierParts to text items of targetIdentifier
-            set targetIdentifier to last item of identifierParts
-            set AppleScript's text item delimiters to ""
-        end if
-        tell application "iTerm2"
-            repeat with terminalWindow in windows
-                repeat with terminalTab in tabs of terminalWindow
-                    repeat with terminalSession in sessions of terminalTab
-                        set sessionIdentifier to unique ID of terminalSession
-                        set sessionTTY to tty of terminalSession
-                        if (targetIdentifier is not "" and sessionIdentifier is targetIdentifier) or (targetTTY is not "" and sessionTTY is targetTTY) then
-                            if requestedAction is "send" then
-                                write terminalSession text promptText newline yes
-                                return "ok"
-                            end if
-                            select terminalSession
-                            select terminalTab
-                            select terminalWindow
-                            activate
-                            return "ok"
-                        end if
-                    end repeat
-                end repeat
-            end repeat
-        end tell
-        return "not-found"
-    end run
-    """
 }

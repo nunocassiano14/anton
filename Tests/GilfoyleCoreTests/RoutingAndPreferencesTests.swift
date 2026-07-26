@@ -29,6 +29,116 @@ struct RoutingAndPreferencesTests {
         }
     }
 
+    @Test("Background reply scripts contain no explicit terminal focus commands")
+    func backgroundRepliesDoNotRequestTerminalFocus() {
+        for script in [
+            TerminalAutomationScripts.terminalSend,
+            TerminalAutomationScripts.iTermSend
+        ] {
+            #expect(!script.contains("activate"))
+            #expect(!script.contains("set selected"))
+            #expect(!script.contains("select terminal"))
+        }
+        #expect(TerminalAutomationScripts.terminalFocus.contains("activate"))
+        #expect(TerminalAutomationScripts.iTermFocus.contains("activate"))
+    }
+
+    @Test("Numbered lists keep indented continuation paragraphs in one run")
+    func numberedListsKeepTheirSequence() {
+        let blocks = MarkdownBlockParser.parse(
+            """
+            1. First market
+
+               Supporting evidence for the first market.
+
+            1. Second market
+
+               Supporting evidence for the second market.
+
+            1. Third market
+            """
+        )
+        #expect(
+            blocks == [
+                .list(
+                    [
+                        "First market\n\nSupporting evidence for the first market.",
+                        "Second market\n\nSupporting evidence for the second market.",
+                        "Third market"
+                    ],
+                    ordered: true,
+                    start: 1
+                )
+            ]
+        )
+    }
+
+    @Test("Separate ordered-list blocks retain the numbers written by the agent")
+    func orderedListBlocksKeepTheirStartingNumber() {
+        let blocks = MarkdownBlockParser.parse(
+            """
+            1. First market
+            Evidence for the first market.
+
+            2. Second market
+            Evidence for the second market.
+
+            3. Third market
+            """
+        )
+        #expect(
+            blocks == [
+                .list(["First market"], ordered: true, start: 1),
+                .text("Evidence for the first market."),
+                .list(["Second market"], ordered: true, start: 2),
+                .text("Evidence for the second market."),
+                .list(["Third market"], ordered: true, start: 3)
+            ]
+        )
+    }
+
+    @Test("Response previews preserve Markdown indentation")
+    func responsePreviewsPreserveMarkdownIndentation() {
+        let message = """
+        1. First market
+
+           Supporting evidence for the first market.
+
+        1. Second market
+        """
+        let reduction = SessionReducer.reduce(
+            existing: nil,
+            request: BridgeRequest(
+                token: "test",
+                agent: .codex,
+                event: HookEventPayload(
+                    name: "Stop",
+                    sessionID: "markdown-preview",
+                    cwd: "/tmp/anton",
+                    lastAssistantMessage: message
+                ),
+                terminal: TerminalContext(kind: .terminal, tty: "/dev/ttys001")
+            )
+        )
+        #expect(
+            reduction.session.lastResponsePreview?
+                .contains("\n   Supporting evidence for the first market.") == true
+        )
+        #expect(
+            MarkdownBlockParser.parse(reduction.session.lastResponsePreview ?? "")
+                == [
+                    .list(
+                        [
+                            "First market\n\nSupporting evidence for the first market.",
+                            "Second market"
+                        ],
+                        ordered: true,
+                        start: 1
+                    )
+                ]
+        )
+    }
+
     @Test("Approval and question responses return only to their own request")
     func interactionBrokerRoutesByRequestID() throws {
         let broker = InteractionResponseBroker()
