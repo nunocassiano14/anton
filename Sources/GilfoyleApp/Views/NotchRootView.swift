@@ -415,7 +415,12 @@ struct NotchRootView: View {
                             SessionCardView(
                                 controller: controller,
                                 session: session,
-                                expandedByDefault: controller.focusedSessionID == session.id
+                                expandedByDefault: controller.focusedSessionID == session.id,
+                                confirmEndByDefault:
+                                    ProcessInfo.processInfo.environment[
+                                        "ANTON_VISUAL_END_CONFIRMATION"
+                                    ] == "1"
+                                    && index == 0
                             )
                             if index < store.sessions.count - 1 {
                                 Divider()

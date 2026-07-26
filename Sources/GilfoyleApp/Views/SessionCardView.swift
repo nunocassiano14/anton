@@ -10,18 +10,23 @@ struct SessionCardView: View {
     @State private var revealsDetail: Bool
     @State private var attachments: [URL] = []
     @State private var isSending = false
+    @State private var isConfirmingEndSession = false
 
     init(
         controller: AppController,
         session: AgentSession,
-        expandedByDefault: Bool = false
+        expandedByDefault: Bool = false,
+        confirmEndByDefault: Bool = false
     ) {
         self.controller = controller
         self.session = session
         self.expandedByDefault = expandedByDefault
         self._revealsDetail = State(
-            initialValue: expandedByDefault || session.state.needsUser
+            initialValue: expandedByDefault
+                || session.state.needsUser
+                || confirmEndByDefault
         )
+        self._isConfirmingEndSession = State(initialValue: confirmEndByDefault)
     }
 
     var body: some View {
@@ -41,8 +46,18 @@ struct SessionCardView: View {
         .onChange(of: expandedByDefault) { _, value in
             if value { revealsDetail = true }
         }
+        .onChange(of: session.state) { _, state in
+            if state == .disconnected {
+                isConfirmingEndSession = false
+            }
+        }
         .contextMenu {
             Button("Open terminal") { controller.focus(sessionID: session.id) }
+            if canEndSession {
+                Button("End session…", role: .destructive) {
+                    requestEndSessionConfirmation()
+                }
+            }
             Divider()
             Button("Dismiss") { controller.dismiss(sessionID: session.id) }
         }
@@ -53,58 +68,106 @@ struct SessionCardView: View {
     }
 
     private var summary: some View {
-        Button {
-            if !session.state.needsUser {
-                revealsDetail.toggle()
-            }
-        } label: {
-            HStack(spacing: 13) {
-                AgentPixelGlyph(agent: session.agent, state: session.state, animationSeed: session.id)
-                    .frame(width: 31, height: 31)
-                    .opacity(session.state == .working ? 1 : 0.36)
-
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(summaryTitle)
-                        .font(.system(size: 14.5, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.92))
-                        .lineLimit(1)
-
-                    HStack(spacing: 7) {
-                        Circle()
-                            .fill(stateColor.opacity(session.state == .working ? 1 : 0.36))
-                            .frame(width: 5, height: 5)
-                            .shadow(
-                                color: stateColor.opacity(session.state == .working ? 0.75 : 0),
-                                radius: 4
-                            )
-                        Text(session.currentActivity ?? session.state.displayName)
-                            .lineLimit(1)
-                        if let action = session.lastAction,
-                           action != session.currentActivity {
-                            Text("·")
-                            Text(action)
-                                .fontDesign(.monospaced)
-                                .lineLimit(1)
-                        }
-                    }
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(.white.opacity(0.48))
+        HStack(spacing: 6) {
+            Button {
+                if !session.state.needsUser {
+                    revealsDetail.toggle()
                 }
+            } label: {
+                HStack(spacing: 13) {
+                    AgentPixelGlyph(agent: session.agent, state: session.state, animationSeed: session.id)
+                        .frame(width: 31, height: 31)
+                        .opacity(session.state == .working ? 1 : 0.36)
 
-                Spacer(minLength: 10)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(summaryTitle)
+                            .font(.system(size: 14.5, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.92))
+                            .lineLimit(1)
 
-                Image(systemName: revealsDetail ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.26))
-                    .frame(width: 12)
+                        HStack(spacing: 7) {
+                            Circle()
+                                .fill(stateColor.opacity(session.state == .working ? 1 : 0.36))
+                                .frame(width: 5, height: 5)
+                                .shadow(
+                                    color: stateColor.opacity(session.state == .working ? 0.75 : 0),
+                                    radius: 4
+                                )
+                            Text(session.currentActivity ?? session.state.displayName)
+                                .lineLimit(1)
+                            if let action = session.lastAction,
+                               action != session.currentActivity {
+                                Text("·")
+                                Text(action)
+                                    .fontDesign(.monospaced)
+                                    .lineLimit(1)
+                            }
+                        }
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.white.opacity(0.48))
+                    }
+
+                    Spacer(minLength: 10)
+
+                    Image(systemName: revealsDetail ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.26))
+                        .frame(width: 12)
+                }
+                .contentShape(Rectangle())
             }
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Menu {
+                Button("Open terminal") {
+                    controller.focus(sessionID: session.id)
+                }
+                if canEndSession {
+                    Button("End session…", role: .destructive) {
+                        requestEndSessionConfirmation()
+                    }
+                }
+                Divider()
+                Button("Dismiss") {
+                    controller.dismiss(sessionID: session.id)
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.38))
+                    .frame(width: 24, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Session actions")
         }
-        .buttonStyle(.plain)
+    }
+
+    private var detail: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            detailContent
+
+            if isConfirmingEndSession {
+                EndSessionConfirmationView(
+                    agentName: session.agent.displayName,
+                    isEnding: controller.endingSessionIDs.contains(session.id),
+                    cancel: { isConfirmingEndSession = false },
+                    confirm: {
+                        isConfirmingEndSession = false
+                        controller.endSession(sessionID: session.id)
+                    }
+                )
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .animation(.easeOut(duration: 0.16), value: isConfirmingEndSession)
     }
 
     @ViewBuilder
-    private var detail: some View {
+    private var detailContent: some View {
         if let pending = session.interaction, pending.kind == .approval {
             ApprovalInteractionView(
                 interaction: pending,
@@ -179,6 +242,18 @@ struct SessionCardView: View {
                 .buttonStyle(QuietButtonStyle())
             }
         }
+    }
+
+    private var canEndSession: Bool {
+        guard let processID = session.terminal.processID else { return false }
+        return processID > 1
+            && session.state != .disconnected
+            && !controller.endingSessionIDs.contains(session.id)
+    }
+
+    private func requestEndSessionConfirmation() {
+        revealsDetail = true
+        isConfirmingEndSession = true
     }
 
     private var summaryTitle: String {
@@ -368,6 +443,51 @@ struct SessionCardView: View {
         }
     }
 
+}
+
+private struct EndSessionConfirmationView: View {
+    let agentName: String
+    let isEnding: Bool
+    let cancel: () -> Void
+    let confirm: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "stop.circle.fill")
+                .font(.system(size: 17))
+                .foregroundStyle(Color(red: 1, green: 0.38, blue: 0.4))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("End this \(agentName) session?")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.9))
+                Text("Current work stops immediately. The terminal tab stays open.")
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.white.opacity(0.42))
+            }
+
+            Spacer(minLength: 10)
+
+            Button("Cancel", action: cancel)
+                .buttonStyle(QuietButtonStyle())
+                .disabled(isEnding)
+            Button(isEnding ? "Ending…" : "End session", action: confirm)
+                .buttonStyle(DangerButtonStyle())
+                .disabled(isEnding)
+        }
+        .padding(11)
+        .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(Color(red: 0.24, green: 0.055, blue: 0.065).opacity(0.74))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(
+                            Color(red: 1, green: 0.38, blue: 0.4).opacity(0.25),
+                            lineWidth: 0.8
+                        )
+                }
+        )
+    }
 }
 
 private struct ApprovalInteractionView: View {

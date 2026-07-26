@@ -121,6 +121,47 @@ private final class FakeTerminalAdapter: TerminalSessionControlling {
     }
 }
 
+private final class FakeAgentTerminatorProcessOperator:
+    AgentProcessOperating,
+    @unchecked Sendable
+{
+    private(set) var currentSnapshot: AgentProcessSnapshot?
+    private(set) var signals: [Int32] = []
+    private let exitsOnSIGTERM: Bool
+    private let replacementAfterWait: AgentProcessSnapshot?
+    private var hasWaited = false
+
+    init(
+        snapshot: AgentProcessSnapshot,
+        exitsOnSIGTERM: Bool = true,
+        replacementAfterWait: AgentProcessSnapshot? = nil
+    ) {
+        self.currentSnapshot = snapshot
+        self.exitsOnSIGTERM = exitsOnSIGTERM
+        self.replacementAfterWait = replacementAfterWait
+    }
+
+    func snapshot(processID: Int32) -> AgentProcessSnapshot? {
+        currentSnapshot?.processID == processID ? currentSnapshot : nil
+    }
+
+    func send(signal: Int32, to processID: Int32) -> Bool {
+        guard currentSnapshot?.processID == processID else { return false }
+        signals.append(signal)
+        if signal == SIGKILL || (signal == SIGTERM && exitsOnSIGTERM) {
+            currentSnapshot = nil
+        }
+        return true
+    }
+
+    func wait(milliseconds: UInt32) {
+        if !hasWaited, let replacementAfterWait {
+            currentSnapshot = replacementAfterWait
+        }
+        hasWaited = true
+    }
+}
+
 private func request(
     agent: AgentKind = .claude,
     event: String,
@@ -659,6 +700,124 @@ runner.run("terminal routing preserves exact tab identity") {
         throw TestFailure(message: "Unknown terminal route was accepted")
     } catch TerminalRouteError.missingStableIdentifier {
     }
+}
+
+runner.run("session termination validates PID, agent, and TTY before signalling") {
+    let snapshot = AgentProcessSnapshot(
+        processID: 4_242,
+        tty: "ttys009",
+        arguments: "/opt/homebrew/bin/codex --yolo"
+    )
+    let process = FakeAgentTerminatorProcessOperator(snapshot: snapshot)
+    let session = AgentSession(
+        agent: .codex,
+        agentSessionID: "termination-test",
+        cwd: "/tmp/anton",
+        state: .working,
+        terminal: TerminalContext(
+            kind: .terminal,
+            tty: "/dev/ttys009",
+            processID: 4_242
+        )
+    )
+    try AgentSessionTerminator(
+        processOperator: process,
+        pollMilliseconds: 0
+    ).terminate(session)
+    try runner.require(
+        process.signals == [SIGTERM],
+        "A validated agent should receive one graceful termination signal"
+    )
+
+    let staleProcess = FakeAgentTerminatorProcessOperator(
+        snapshot: AgentProcessSnapshot(
+            processID: 4_242,
+            tty: "ttys009",
+            arguments: "/usr/bin/python3 worker.py"
+        )
+    )
+    do {
+        try AgentSessionTerminator(
+            processOperator: staleProcess,
+            pollMilliseconds: 0
+        ).terminate(session)
+        try runner.require(false, "A stale PID must be rejected")
+    } catch AgentSessionTerminationError.agentMismatch {
+        try runner.require(
+            staleProcess.signals.isEmpty,
+            "A process with the wrong executable must never receive a signal"
+        )
+    }
+}
+
+runner.run("stubborn agent termination escalates only after revalidation") {
+    let process = FakeAgentTerminatorProcessOperator(
+        snapshot: AgentProcessSnapshot(
+            processID: 4_243,
+            tty: "ttys010",
+            arguments: "/usr/local/bin/claude"
+        ),
+        exitsOnSIGTERM: false
+    )
+    let session = AgentSession(
+        agent: .claude,
+        agentSessionID: "stubborn-test",
+        cwd: "/tmp/anton",
+        state: .working,
+        terminal: TerminalContext(
+            kind: .terminal,
+            tty: "/dev/ttys010",
+            processID: 4_243
+        )
+    )
+    try AgentSessionTerminator(
+        processOperator: process,
+        gracefulPollCount: 1,
+        forcedPollCount: 1,
+        pollMilliseconds: 0
+    ).terminate(session)
+    try runner.require(
+        process.signals == [SIGTERM, SIGKILL],
+        "A still-valid stubborn agent should receive SIGTERM then SIGKILL"
+    )
+}
+
+runner.run("a reused PID is never force-killed") {
+    let replacement = AgentProcessSnapshot(
+        processID: 4_244,
+        tty: "ttys011",
+        arguments: "/usr/bin/python3 replacement.py"
+    )
+    let process = FakeAgentTerminatorProcessOperator(
+        snapshot: AgentProcessSnapshot(
+            processID: 4_244,
+            tty: "ttys011",
+            arguments: "/opt/homebrew/bin/codex --yolo"
+        ),
+        exitsOnSIGTERM: false,
+        replacementAfterWait: replacement
+    )
+    let session = AgentSession(
+        agent: .codex,
+        agentSessionID: "pid-reuse-test",
+        cwd: "/tmp/anton",
+        state: .working,
+        terminal: TerminalContext(
+            kind: .terminal,
+            tty: "/dev/ttys011",
+            processID: 4_244
+        )
+    )
+    try AgentSessionTerminator(
+        processOperator: process,
+        gracefulPollCount: 1,
+        forcedPollCount: 1,
+        pollMilliseconds: 0
+    ).terminate(session)
+    try runner.require(
+        process.signals == [SIGTERM] && process.currentSnapshot == replacement,
+        "A replacement process must survive without receiving SIGKILL"
+    )
 }
 
 runner.run("background reply scripts do not request terminal focus") {

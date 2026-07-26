@@ -20,6 +20,7 @@ final class AppController: ObservableObject {
     @Published private(set) var environment = EnvironmentDetector.detect()
     @Published private(set) var pendingCalloutCount = 0
     @Published private(set) var compactCameraWidth: CGFloat = 150
+    @Published private(set) var endingSessionIDs: Set<String> = []
     private var calloutAccessoryHeight: CGFloat = 0
     let compactAntonWingWidth: CGFloat = 55
 
@@ -47,8 +48,13 @@ final class AppController: ObservableObject {
 
     private let socketServer = UnixSocketServer()
     private let terminalAutomation: any TerminalSessionControlling
+    private let sessionTerminator: any AgentSessionTerminating
     private let processMonitor = SessionProcessMonitor()
     private let agentProcessDiscovery = CodingAgentProcessDiscovery()
+    private let terminationQueue = DispatchQueue(
+        label: "com.augustalabs.anton.session-termination",
+        qos: .userInitiated
+    )
     private let shortcutManager = GlobalShortcutManager()
     private let responseBroker = InteractionResponseBroker()
     private var cancellables: Set<AnyCancellable> = []
@@ -61,8 +67,12 @@ final class AppController: ObservableObject {
 
     lazy var integrationInstaller = IntegrationInstaller(helperURL: helperExecutableURL)
 
-    init(terminalAutomation: any TerminalSessionControlling = TerminalAutomationController()) {
+    init(
+        terminalAutomation: any TerminalSessionControlling = TerminalAutomationController(),
+        sessionTerminator: any AgentSessionTerminating = AgentSessionTerminator()
+    ) {
         self.terminalAutomation = terminalAutomation
+        self.sessionTerminator = sessionTerminator
 
         preferences.$shortcut
             .sink { [weak self] shortcut in
@@ -248,6 +258,42 @@ final class AppController: ObservableObject {
         terminalAutomation.focus(session: session) { [weak self] result in
             if case .failure(let error) = result {
                 self?.showMessage(error.localizedDescription)
+            }
+        }
+    }
+
+    func endSession(sessionID: String) {
+        guard
+            !endingSessionIDs.contains(sessionID),
+            let session = sessionStore.session(id: sessionID)
+        else {
+            return
+        }
+        endingSessionIDs.insert(sessionID)
+        showMessage("Ending \(session.agent.displayName) session…")
+        let terminator = sessionTerminator
+        terminationQueue.async { [weak self] in
+            let result = Result { try terminator.terminate(session) }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.endingSessionIDs.remove(sessionID)
+                switch result {
+                case .success:
+                    self.processMonitor.stopWatching(sessionID: sessionID)
+                    self.queuedReplies.removeValue(forKey: sessionID)
+                    self.pendingCallouts.remove(sessionID: sessionID)
+                    self.pendingCalloutCount = self.pendingCallouts.count
+                    if self.calloutSessionID == sessionID {
+                        self.dismissCallout()
+                    }
+                    self.agentProcessExited(
+                        sessionID: sessionID,
+                        reason: "Session ended by you"
+                    )
+                    self.showMessage("Session ended.")
+                case .failure(let error):
+                    self.showMessage(error.localizedDescription)
+                }
             }
         }
     }
@@ -497,7 +543,15 @@ final class AppController: ObservableObject {
         sessionStore.resolveInteraction(sessionID: sessionID)
     }
 
-    private func agentProcessExited(sessionID: String) {
+    private func agentProcessExited(
+        sessionID: String,
+        reason: String = "Agent process exited"
+    ) {
+        if sessionStore.session(id: sessionID)?.state == .disconnected,
+           sessionStore.session(id: sessionID)?.currentActivity == "Session ended by you"
+        {
+            return
+        }
         if let interactionID = sessionStore.session(id: sessionID)?.interaction?.id {
             _ = responseBroker.resolve(
                 requestID: interactionID,
@@ -508,7 +562,8 @@ final class AppController: ObservableObject {
                 )
             )
         }
-        sessionStore.markDisconnected(sessionID: sessionID)
+        queuedReplies.removeValue(forKey: sessionID)
+        sessionStore.markDisconnected(sessionID: sessionID, reason: reason)
     }
 
     private func showMessage(_ message: String) {
