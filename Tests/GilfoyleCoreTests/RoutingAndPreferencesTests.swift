@@ -81,8 +81,7 @@ struct RoutingAndPreferencesTests {
                 control: true,
                 shift: true
             ),
-            onboardingComplete: true,
-            launchAtLoginPreference: false
+            onboardingComplete: true
         )
 
         try repository.save(expected)
@@ -99,7 +98,7 @@ struct RoutingAndPreferencesTests {
             defaults.removePersistentDomain(forName: suiteName)
             legacyDefaults.removePersistentDomain(forName: legacySuiteName)
         }
-        let expected = StoredPreferences(onboardingComplete: true, launchAtLoginPreference: false)
+        let expected = StoredPreferences(onboardingComplete: true)
         legacyDefaults.set(try JSONEncoder().encode(expected), forKey: PreferencesRepository.legacyKey)
 
         #expect(

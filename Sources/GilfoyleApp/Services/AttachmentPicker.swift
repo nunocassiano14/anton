@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 /// A native open panel is used instead of SwiftUI's `fileImporter` because
 /// Anton's notch is intentionally a non-activating panel. `fileImporter`
 /// silently fails to present from that kind of window on some macOS versions.
+@MainActor
 enum AttachmentPicker {
     static func present(completion: @escaping ([URL]) -> Void) {
         NSApp.activate(ignoringOtherApps: true)

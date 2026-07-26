@@ -7,6 +7,7 @@
 Current coverage:
 
 - Main session lifecycle and visual callout signal on main Stop
+- Concurrent callout FIFO, urgent priority and duplicate coalescing
 - Codex turn identity across fast start/completion boundaries
 - Duplicate Terminal/iTerm TTY inventory reconciliation
 - Direct and Node-wrapped CLI process classification
@@ -48,7 +49,6 @@ These checks require the built app, macOS permission dialogs, and interactive lo
 - [x] Inspect compact primary-display notch surface
 - [x] Inspect expanded empty board
 - [x] Inspect Settings and menu-bar states
-- [ ] Grant Accessibility
 - [ ] Grant Automation for Terminal and iTerm
 - [x] Install Claude and Codex hooks
 - [ ] Trust Codex hooks with `/hooks`
@@ -57,7 +57,7 @@ These checks require the built app, macOS permission dialogs, and interactive lo
 - [x] Confirm both appear automatically
 - [x] Confirm Working and Finished states
 - [x] Confirm one visual callout per main turn
-- [x] Confirm a new response replaces the current callout without obscuring the full board
+- [x] Confirm concurrent responses queue without replacing the visible callout
 - [ ] Focus the exact original tab for both agents
 - [ ] Send a reply to each exact session
 - [ ] Verify Enter, Shift+Enter, and Escape
@@ -76,7 +76,7 @@ The ad-hoc signed app was installed at `~/Applications/Anton.app`. A real Claude
 
 The installed process held only the private Unix socket and no TCP or UDP listener. Both the token and socket were mode `0600`. The per-user launchd job was loaded and running from the installed application path.
 
-Installing the final ad-hoc signature invalidated prior macOS Accessibility and Automation consent, as expected. Those user-mediated permissions, the refreshed Codex `/hooks` trust decision, exact-session focus/reply, real approval/question responses, and Wispr Flow dictation remain unchecked above.
+Installing the final ad-hoc signature invalidated prior macOS Automation consent, as expected. That user-mediated permission, the refreshed Codex `/hooks` trust decision, exact-session focus/reply, real approval/question responses, and Wispr Flow dictation remain unchecked above.
 
 ## Stability audit, 2026-07-26
 
@@ -84,6 +84,6 @@ Installing the final ad-hoc signature invalidated prior macOS Accessibility and 
 - Replaced the uniqueness precondition with deterministic last-value merging.
 - Profiled the installed process and cached PID/session metadata plus Terminal/iTerm inventory.
 - Reduced idle rendering by pausing completed/idle glyphs and lowering decorative animation cadence.
-- Ran the 29-case standalone suite and a production build without warnings.
+- Ran the 30-case standalone suite and a production build without warnings.
 - Captured compact, onboarding, callout, board, and Settings states from the installed binary.
 - Completed a post-install soak with no new crash reports; CPU stayed near 4% with five live CLIs.

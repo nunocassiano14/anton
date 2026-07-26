@@ -11,5 +11,5 @@
 - A tab closed or moved to a different terminal process cannot be targeted afterward.
 - The top-center compact panel is the visual fallback on Macs without a physical notch; the menu-bar interface remains available, but version 1 does not use a separate NSPopover.
 - Approval cards show the current action and command/description, not a full diff review.
-- Development builds are ad-hoc signed and not notarized. macOS Automation or Accessibility consent can need renewal when the signature changes.
+- Development builds are ad-hoc signed and not notarized. macOS Automation consent can need renewal when the signature changes.
 - Public App Store distribution, remote access, multi-Mac synchronization, analytics, accounts, and payments are intentionally absent.

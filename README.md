@@ -60,12 +60,11 @@ The repository also contains `Anton.xcodeproj`. Its `Anton` scheme invokes the s
 Open `build/Anton.app` or the installed copy. On first launch:
 
 1. Review the detected Claude Code, Codex, Terminal, and iTerm installations.
-2. Grant Accessibility when macOS opens System Settings.
-3. Request Automation access for Terminal and iTerm. macOS shows one consent dialog for each application.
-4. Install Claude Code hooks.
-5. Install Codex hooks.
-6. Start Codex and run `/hooks` once to review and trust the exact Anton hook definition.
-7. Finish setup. Anton's local supervisor starts it at login and restarts only abnormal exits.
+2. Request Automation access for Terminal and iTerm. macOS shows one consent dialog for each application.
+3. Install Claude Code hooks.
+4. Install Codex hooks.
+5. Start Codex and run `/hooks` once to review and trust the exact Anton hook definition.
+6. Finish setup. Anton's local supervisor starts it at login and restarts only abnormal exits.
 
 Sessions with installed hooks provide the richest live detail. Anton also discovers already-open Codex and Claude Code processes in Terminal and iTerm locally, including their current local lifecycle state where available.
 
@@ -80,7 +79,7 @@ codex
 
 Click the compact notch surface or press `⌥⌘G` to open the board. Each flat session row identifies the agent, project, model, terminal, state, activity, start time, and last action when the hook exposes that information.
 
-When a main turn finishes, Anton expands into a focused visual callout. Type or dictate in that session's native editor and press Enter. You can also paste an image or attach a local file. Anton resolves the stored Terminal TTY or iTerm unique session ID before sending, so it never targets whichever terminal happens to be focused.
+When a main turn finishes, Anton expands into a focused visual callout. Type or dictate in that session's native editor and press Enter. You can also paste an image or attach a local file. Anton resolves the stored Terminal TTY or iTerm unique session ID before sending, so it never targets whichever terminal happens to be focused. If another agent finishes while a callout is visible, Anton queues it; urgent approvals and questions move ahead of normal completions.
 
 Approval and question hooks remain blocked while the card awaits a response. Anton sends only the explicit Allow, Deny, Cancel, or answer selected by the user; it does not weaken Claude Code or Codex sandbox policy.
 
@@ -133,7 +132,6 @@ Removing the integration does not delete backups or application preferences.
 ### Reply or focus fails
 
 - Open System Settings → Privacy & Security → Automation and allow Anton to control Terminal and iTerm.
-- Open System Settings → Privacy & Security → Accessibility and enable Anton.
 - If the app was rebuilt with a new ad-hoc signature, macOS may require permission again.
 - A session whose original tab was closed cannot be retargeted; dismiss its card.
 

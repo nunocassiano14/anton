@@ -5,7 +5,6 @@ import GilfoyleCore
 @MainActor
 final class SessionStore: ObservableObject {
     @Published private(set) var sessions: [AgentSession] = []
-    @Published private(set) var lastCompletedSessionID: String?
     /// Anton's definition of working is deliberately user-centric: from the
     /// moment a prompt is sent until that prompt has a completed response.
     /// Local rollouts can be quiet between tool events, so their temporary
@@ -59,9 +58,6 @@ final class SessionStore: ObservableObject {
             awaitingResponse.remove(session.id)
             awaitingFreshTaskStart.remove(session.id)
             replySentAt.removeValue(forKey: session.id)
-        }
-        if reduction.didCompleteMainTurn {
-            lastCompletedSessionID = session.id
         }
         return SessionReduction(
             session: session,
@@ -149,7 +145,6 @@ final class SessionStore: ObservableObject {
                     awaitingFreshTaskStart.remove(session.id)
                     replySentAt.removeValue(forKey: session.id)
                     completedSessionIDs.append(session.id)
-                    lastCompletedSessionID = session.id
                 }
                 continue
             }
@@ -219,7 +214,6 @@ final class SessionStore: ObservableObject {
             awaitingFreshTaskStart.insert(sessionID)
             replySentAt[sessionID] = Date()
         }
-        acknowledgeCompletion(sessionID: sessionID)
     }
 
     func resolveInteraction(sessionID: String, nextState: AgentSessionState = .working) {
@@ -244,21 +238,12 @@ final class SessionStore: ObservableObject {
         }
     }
 
-    func acknowledgeCompletion(sessionID: String) {
-        if lastCompletedSessionID == sessionID {
-            lastCompletedSessionID = nil
-        }
-    }
-
     func dismiss(sessionID: String) {
         sessions.removeAll(where: { $0.id == sessionID })
         awaitingResponse.remove(sessionID)
         awaitingFreshTaskStart.remove(sessionID)
         latestTaskTurnID.removeValue(forKey: sessionID)
         replySentAt.removeValue(forKey: sessionID)
-        if lastCompletedSessionID == sessionID {
-            lastCompletedSessionID = nil
-        }
     }
 
     func session(id: String) -> AgentSession? {

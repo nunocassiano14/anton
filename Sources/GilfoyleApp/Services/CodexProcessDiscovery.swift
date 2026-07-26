@@ -253,8 +253,15 @@ private struct TerminalInventory {
         process.standardError = FileHandle.nullDevice
         do {
             try process.run()
+            let timeout = Date().addingTimeInterval(5)
+            while process.isRunning && Date() < timeout {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            if process.isRunning {
+                process.terminate()
+                return []
+            }
             let data = output.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
             guard process.terminationStatus == 0,
                   let text = String(data: data, encoding: .utf8)
             else {

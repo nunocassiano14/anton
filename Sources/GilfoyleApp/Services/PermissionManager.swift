@@ -1,26 +1,13 @@
 import AppKit
-import ApplicationServices
 import Combine
 import Foundation
 
 @MainActor
 final class PermissionManager: ObservableObject {
-    @Published private(set) var accessibilityTrusted = AXIsProcessTrusted()
     @Published private(set) var automationFailures: [String]?
 
     var automationRequestAttempted: Bool { automationFailures != nil }
     var automationReady: Bool { automationFailures?.isEmpty == true }
-
-    func refresh() {
-        accessibilityTrusted = AXIsProcessTrusted()
-    }
-
-    func requestAccessibility() {
-        let options = [
-            kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true
-        ] as CFDictionary
-        accessibilityTrusted = AXIsProcessTrustedWithOptions(options)
-    }
 
     func requestAutomation(completion: @escaping ([String]) -> Void) {
         var targets: [(String, String)] = []

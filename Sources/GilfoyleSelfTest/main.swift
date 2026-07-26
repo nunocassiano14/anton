@@ -270,6 +270,21 @@ runner.run("Duplicate TTY inventory rows keep the latest value") {
     )
 }
 
+runner.run("Concurrent callouts queue without replacing one another") {
+    var queue = PendingCalloutQueue()
+    queue.enqueue(sessionID: "finished-a", urgent: false)
+    queue.enqueue(sessionID: "finished-b", urgent: false)
+    queue.enqueue(sessionID: "approval-a", urgent: true)
+    queue.enqueue(sessionID: "approval-b", urgent: true)
+    queue.enqueue(sessionID: "finished-b", urgent: false)
+
+    try runner.require(queue.count == 4, "Duplicate session notifications should be coalesced")
+    try runner.require(queue.popFirst() == "approval-a", "Urgent work should lead pending callouts")
+    try runner.require(queue.popFirst() == "approval-b", "Urgent work should remain FIFO")
+    try runner.require(queue.popFirst() == "finished-a", "Normal callouts should preserve FIFO order")
+    try runner.require(queue.popFirst() == "finished-b", "Every distinct completion should remain queued")
+}
+
 runner.run("CLI discovery supports package-manager wrappers") {
     try runner.require(
         AgentProcessClassifier.agentKind(for: "/opt/homebrew/bin/codex --yolo") == .codex,
@@ -653,8 +668,7 @@ runner.run("daily-use settings persist together") {
             control: true,
             shift: true
         ),
-        onboardingComplete: true,
-        launchAtLoginPreference: false
+        onboardingComplete: true
     )
     try PreferencesRepository(defaults: defaults).save(expected)
     let loaded = PreferencesRepository(defaults: defaults).load()
@@ -674,7 +688,7 @@ runner.run("Anton adopts preferences from the previous local build") {
         defaults.removePersistentDomain(forName: suiteName)
         legacyDefaults.removePersistentDomain(forName: legacySuiteName)
     }
-    let expected = StoredPreferences(onboardingComplete: true, launchAtLoginPreference: false)
+    let expected = StoredPreferences(onboardingComplete: true)
     legacyDefaults.set(try JSONEncoder().encode(expected), forKey: PreferencesRepository.legacyKey)
     try runner.require(
         PreferencesRepository(defaults: defaults, legacyDefaults: legacyDefaults).load() == expected,

@@ -21,13 +21,6 @@ final class AppPreferences: ObservableObject {
         }
     }
 
-    @Published var launchAtLoginPreference: Bool {
-        didSet {
-            stored.launchAtLoginPreference = launchAtLoginPreference
-            persist()
-        }
-    }
-
     init(defaults: UserDefaults = .standard) {
         let repository = PreferencesRepository(defaults: defaults)
         let stored = repository.load()
@@ -35,7 +28,6 @@ final class AppPreferences: ObservableObject {
         self.stored = stored
         self.shortcut = stored.shortcut
         self.onboardingComplete = stored.onboardingComplete
-        self.launchAtLoginPreference = stored.launchAtLoginPreference
         try? repository.save(stored)
     }
 

@@ -57,16 +57,13 @@ public struct ShortcutConfiguration: Codable, Equatable, Sendable {
 public struct StoredPreferences: Codable, Equatable, Sendable {
     public var shortcut: ShortcutConfiguration
     public var onboardingComplete: Bool
-    public var launchAtLoginPreference: Bool
 
     public init(
         shortcut: ShortcutConfiguration = .defaultShortcut,
-        onboardingComplete: Bool = false,
-        launchAtLoginPreference: Bool = true
+        onboardingComplete: Bool = false
     ) {
         self.shortcut = shortcut
         self.onboardingComplete = onboardingComplete
-        self.launchAtLoginPreference = launchAtLoginPreference
     }
 }
 

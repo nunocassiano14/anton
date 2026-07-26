@@ -120,20 +120,17 @@ final class TerminalAutomationController: TerminalSessionControlling {
                 repeat with terminalTab in tabs of terminalWindow
                     if tty of terminalTab is targetTTY then
                         if requestedAction is "send" then
-                            -- Route the text by the exact TTY first, then use
-                            -- a real Return key event. A CR sent through
-                            -- `do script` can remain in an interactive CLI's
-                            -- composer instead of submitting it.
+                            -- `do script` supplies one Return. Interactive
+                            -- TUIs can consume that first Return to finish a
+                            -- paste, so send a second empty native command.
+                            -- This avoids System Events keystrokes and their
+                            -- separate Accessibility permission.
                             set selected of terminalTab to true
                             set index of terminalWindow to 1
                             activate
                             do script promptText in terminalTab
                             delay 0.12
-                            tell application "System Events"
-                                tell process "Terminal"
-                                    key code 36
-                                end tell
-                            end tell
+                            do script "" in terminalTab
                             return "ok"
                         end if
                         set selected of terminalTab to true

@@ -9,7 +9,6 @@ final class AppController: ObservableObject {
     let sessionStore = SessionStore()
     let preferences = AppPreferences()
     let permissionManager = PermissionManager()
-    let launchAtLoginManager = LaunchAtLoginManager()
 
     @Published var isExpanded = false
     @Published private(set) var calloutSessionID: String?
@@ -19,6 +18,7 @@ final class AppController: ObservableObject {
     @Published private(set) var claudeIntegration: IntegrationStatus?
     @Published private(set) var codexIntegration: IntegrationStatus?
     @Published private(set) var environment = EnvironmentDetector.detect()
+    @Published private(set) var pendingCalloutCount = 0
     private var calloutAccessoryHeight: CGFloat = 0
 
     var preferredCalloutBodyHeight: CGFloat {
@@ -40,7 +40,7 @@ final class AppController: ObservableObject {
     private let shortcutManager = GlobalShortcutManager()
     private let responseBroker = InteractionResponseBroker()
     private var cancellables: Set<AnyCancellable> = []
-    private var calloutDismissWorkItem: DispatchWorkItem?
+    private var pendingCallouts = PendingCalloutQueue()
     private var queuedReplies: [String: [String]] = [:]
 
     private var panelController: NotchPanelController?
@@ -87,7 +87,7 @@ final class AppController: ObservableObject {
                 // A local Codex rollout can finish without emitting a Stop
                 // hook. The process scan is the fallback that still turns
                 // that completion into the visible Anton callout.
-                if let sessionID = completed.last {
+                for sessionID in completed {
                     self.showCompletionCallout(sessionID: sessionID)
                 }
             }
@@ -96,9 +96,7 @@ final class AppController: ObservableObject {
         // Older builds also registered SMAppService in addition to Anton's
         // launchd supervisor. Keep a single startup owner to avoid two
         // processes racing and bouncing the overlay at login.
-        if launchAtLoginManager.isEnabled {
-            launchAtLoginManager.disableLegacyRegistrationIfNeeded()
-        }
+        LaunchAtLoginManager.disableLegacyRegistrationIfNeeded()
         refreshIntegrations()
         if !preferences.onboardingComplete {
             showOnboarding()
@@ -124,9 +122,6 @@ final class AppController: ObservableObject {
     }
 
     func setExpanded(_ expanded: Bool) {
-        if !expanded {
-            cancelCalloutDismiss()
-        }
         calloutSessionID = nil
         calloutAccessoryHeight = 0
         focusedSessionID = nil
@@ -135,11 +130,15 @@ final class AppController: ObservableObject {
     }
 
     func collapsePanel() {
+        if calloutSessionID != nil, presentNextPendingCallout() {
+            return
+        }
         setExpanded(false)
     }
 
     func showSessionBoard(focusing sessionID: String? = nil) {
-        cancelCalloutDismiss()
+        pendingCallouts.removeAll()
+        pendingCalloutCount = 0
         calloutSessionID = nil
         calloutAccessoryHeight = 0
         focusedSessionID = sessionID
@@ -148,38 +147,53 @@ final class AppController: ObservableObject {
     }
 
     func showCompletionCallout(sessionID: String) {
-        presentCallout(sessionID: sessionID)
+        presentOrQueueCallout(sessionID: sessionID, urgent: false)
     }
 
     func showUrgentCallout(sessionID: String) {
         // An approval or question is actionable work, not a toast. Keep it
         // visible until the user answers, opens the board, or presses X.
-        presentCallout(sessionID: sessionID)
+        presentOrQueueCallout(sessionID: sessionID, urgent: true)
     }
 
     func dismissCallout() {
-        cancelCalloutDismiss()
-        calloutSessionID = nil
-        calloutAccessoryHeight = 0
-        focusedSessionID = nil
-        isExpanded = false
-        panelController?.setExpanded(false)
+        collapsePanel()
     }
 
-    private func presentCallout(sessionID: String, dismissAfter: TimeInterval? = nil) {
-        cancelCalloutDismiss()
+    private func presentOrQueueCallout(sessionID: String, urgent: Bool) {
+        guard sessionStore.session(id: sessionID) != nil else { return }
+        guard calloutSessionID != sessionID else { return }
+        if calloutSessionID != nil {
+            pendingCallouts.enqueue(sessionID: sessionID, urgent: urgent)
+            pendingCalloutCount = pendingCallouts.count
+            return
+        }
+        // The expanded board already exposes every live session. Do not
+        // interrupt active work by replacing it with a callout.
+        guard !isExpanded else { return }
+        presentCallout(sessionID: sessionID)
+    }
+
+    private func presentNextPendingCallout() -> Bool {
+        while let sessionID = pendingCallouts.popFirst() {
+            pendingCalloutCount = pendingCallouts.count
+            guard let session = sessionStore.session(id: sessionID),
+                  [.finished, .needsApproval, .hasQuestion, .error].contains(session.state)
+            else {
+                continue
+            }
+            presentCallout(sessionID: sessionID)
+            return true
+        }
+        return false
+    }
+
+    private func presentCallout(sessionID: String) {
         calloutAccessoryHeight = 0
         calloutSessionID = sessionID
         focusedSessionID = nil
         isExpanded = true
         panelController?.setExpanded(true)
-        guard let dismissAfter else { return }
-        let workItem = DispatchWorkItem { [weak self] in
-            guard self?.calloutSessionID == sessionID else { return }
-            self?.dismissCallout()
-        }
-        calloutDismissWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + dismissAfter, execute: workItem)
     }
 
     func setCalloutHasAttachments(_ hasAttachments: Bool) {
@@ -188,12 +202,6 @@ final class AppController: ObservableObject {
         guard calloutAccessoryHeight != nextHeight else { return }
         calloutAccessoryHeight = nextHeight
         panelController?.setExpanded(true)
-    }
-
-    func replyFromCallout(sessionID: String) {
-        sessionStore.acknowledgeCompletion(sessionID: sessionID)
-        showSessionBoard(focusing: sessionID)
-        beginExplicitReply()
     }
 
     /// The panel stays non-key while it is merely visible. A direct click in
@@ -216,7 +224,6 @@ final class AppController: ObservableObject {
 
     func focus(sessionID: String) {
         guard let session = sessionStore.session(id: sessionID) else { return }
-        sessionStore.acknowledgeCompletion(sessionID: sessionID)
         terminalAutomation.focus(session: session) { [weak self] result in
             if case .failure(let error) = result {
                 self?.showMessage(error.localizedDescription)
@@ -322,22 +329,16 @@ final class AppController: ObservableObject {
     }
 
     func dismiss(sessionID: String) {
-        sessionStore.dismiss(sessionID: sessionID)
-    }
-
-    func updateShortcut(_ shortcut: ShortcutConfiguration) {
-        do {
-            try shortcutManager.register(shortcut)
-            preferences.shortcut = shortcut
-        } catch {
-            showMessage(error.localizedDescription)
+        pendingCallouts.remove(sessionID: sessionID)
+        pendingCalloutCount = pendingCallouts.count
+        if calloutSessionID == sessionID {
+            dismissCallout()
         }
+        sessionStore.dismiss(sessionID: sessionID)
     }
 
     func refreshEnvironment() {
         environment = EnvironmentDetector.detect()
-        permissionManager.refresh()
-        launchAtLoginManager.refresh()
     }
 
     func refreshIntegrations() {
@@ -463,11 +464,6 @@ final class AppController: ObservableObject {
         }
     }
 
-    private func cancelCalloutDismiss() {
-        calloutDismissWorkItem?.cancel()
-        calloutDismissWorkItem = nil
-    }
-
     private func resolve(
         interactionID: String,
         sessionID: String,
@@ -574,12 +570,18 @@ final class AppController: ObservableObject {
                 )
 
                 self.seedVisualValidationSessions()
+                self.setExpanded(false)
+                self.capture(
+                    window: self.panelController?.window,
+                    to: destination.appendingPathComponent("03-compact-overflow.png")
+                )
                 self.showCompletionCallout(sessionID: "claude:visual-finished")
+                self.showUrgentCallout(sessionID: "claude:visual-claude")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
                     guard let self else { return }
                     self.capture(
                         window: self.panelController?.window,
-                        to: destination.appendingPathComponent("03-callout.png")
+                        to: destination.appendingPathComponent("04-callout-queued.png")
                     )
 
                     self.showSessionBoard()
@@ -587,7 +589,7 @@ final class AppController: ObservableObject {
                         guard let self else { return }
                         self.capture(
                             window: self.panelController?.window,
-                            to: destination.appendingPathComponent("04-session-board.png")
+                            to: destination.appendingPathComponent("05-session-board.png")
                         )
 
                         self.showSettings()
@@ -595,7 +597,7 @@ final class AppController: ObservableObject {
                             guard let self else { return }
                             self.capture(
                                 window: self.settingsWindowController?.window,
-                                to: destination.appendingPathComponent("05-settings.png")
+                                to: destination.appendingPathComponent("06-settings.png")
                             )
                         }
                     }
@@ -692,6 +694,28 @@ final class AppController: ObservableObject {
             ),
             now: now.addingTimeInterval(-24)
         )
+        for index in 0..<3 {
+            _ = sessionStore.ingest(
+                BridgeRequest(
+                    token: "visual-validation",
+                    requestID: "visual-extra-\(index)",
+                    agent: index.isMultiple(of: 2) ? .codex : .claude,
+                    event: HookEventPayload(
+                        name: "SessionStart",
+                        sessionID: "visual-extra-\(index)",
+                        cwd: "/Users/example/project-\(index)",
+                        model: index.isMultiple(of: 2) ? "GPT-5" : "Claude Sonnet"
+                    ),
+                    terminal: TerminalContext(
+                        kind: .terminal,
+                        terminalSessionID: "visual-extra-terminal-\(index)",
+                        tty: "/dev/ttys0\(20 + index)"
+                    ),
+                    sentAt: now
+                ),
+                now: now.addingTimeInterval(Double(-12 - index))
+            )
+        }
     }
 
     private func capture(window: NSWindow?, to destination: URL) {

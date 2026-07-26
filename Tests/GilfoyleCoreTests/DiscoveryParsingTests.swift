@@ -4,6 +4,23 @@ import Testing
 
 @Suite("Local agent discovery parsing")
 struct DiscoveryParsingTests {
+    @Test("callouts queue FIFO while urgent work moves ahead")
+    func pendingCalloutsPreserveEverySession() {
+        var queue = PendingCalloutQueue()
+        queue.enqueue(sessionID: "finished-a", urgent: false)
+        queue.enqueue(sessionID: "finished-b", urgent: false)
+        queue.enqueue(sessionID: "approval-a", urgent: true)
+        queue.enqueue(sessionID: "approval-b", urgent: true)
+        queue.enqueue(sessionID: "finished-b", urgent: false)
+
+        #expect(queue.count == 4)
+        #expect(queue.popFirst() == "approval-a")
+        #expect(queue.popFirst() == "approval-b")
+        #expect(queue.popFirst() == "finished-a")
+        #expect(queue.popFirst() == "finished-b")
+        #expect(queue.popFirst() == nil)
+    }
+
     @Test("duplicate TTY inventory rows keep the latest valid value")
     func duplicateTTYInventoryRowsKeepLatestValue() {
         let inventory = TerminalInventoryParser.parse(

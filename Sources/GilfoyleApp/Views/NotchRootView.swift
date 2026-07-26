@@ -166,6 +166,14 @@ struct NotchRootView: View {
                     quickAction("Open hub", icon: "rectangle.expand.vertical") {
                         controller.showSessionBoard(focusing: session.id)
                     }
+                    if controller.pendingCalloutCount > 0 {
+                        Text("+\(controller.pendingCalloutCount) waiting")
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.72))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(Capsule().fill(Color.white.opacity(0.10)))
+                    }
                     Spacer(minLength: 0)
                 }
                 .padding(.leading, 44)
@@ -374,7 +382,7 @@ struct NotchRootView: View {
     }
 
     private var compactSessions: [AgentSession] {
-        Array(store.sessions.prefix(8))
+        Array(store.sessions.prefix(store.sessions.count >= 6 ? 4 : store.sessions.count))
     }
 
     private func compactAccessibilityLabel(for session: AgentSession) -> String {

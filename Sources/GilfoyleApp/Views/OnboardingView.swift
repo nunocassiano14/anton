@@ -84,14 +84,6 @@ struct OnboardingView: View {
     private var permissionsCard: some View {
         SetupCard(number: "02", title: "macOS permissions") {
             SetupActionRow(
-                title: "Accessibility",
-                detail: "Focus the exact session and support terminal handoff.",
-                ready: permissionManager.accessibilityTrusted,
-                buttonTitle: "Grant…",
-                action: { permissionManager.requestAccessibility() }
-            )
-            Divider()
-            SetupActionRow(
                 title: "Terminal automation",
                 detail: (permissionManager.automationFailures ?? []).isEmpty
                     ? "Send replies to Terminal and iTerm."
