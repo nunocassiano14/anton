@@ -43,6 +43,28 @@ struct RoutingAndPreferencesTests {
         #expect(TerminalAutomationScripts.iTermFocus.contains("activate"))
     }
 
+    @Test("Attention cards open automatically but remain user-collapsible")
+    func attentionCardsCanBeCollapsed() {
+        let opened = SessionDisclosurePolicy.initial(
+            expandedByDefault: false,
+            state: .finished
+        )
+        #expect(opened)
+        #expect(!SessionDisclosurePolicy.toggled(opened))
+        #expect(
+            !SessionDisclosurePolicy.afterStateChange(
+                current: false,
+                state: .working
+            )
+        )
+        #expect(
+            SessionDisclosurePolicy.afterStateChange(
+                current: false,
+                state: .hasQuestion
+            )
+        )
+    }
+
     @Test("Numbered lists keep indented continuation paragraphs in one run")
     func numberedListsKeepTheirSequence() {
         let blocks = MarkdownBlockParser.parse(

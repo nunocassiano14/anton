@@ -839,6 +839,31 @@ runner.run("background reply scripts do not request terminal focus") {
     )
 }
 
+runner.run("attention cards open once but always remain collapsible") {
+    let opened = SessionDisclosurePolicy.initial(
+        expandedByDefault: false,
+        state: .finished
+    )
+    try runner.require(
+        opened && !SessionDisclosurePolicy.toggled(opened),
+        "A ready response should open initially and close when the user clicks"
+    )
+    try runner.require(
+        !SessionDisclosurePolicy.afterStateChange(
+            current: false,
+            state: .working
+        ),
+        "Ordinary updates must not reopen a card the user collapsed"
+    )
+    try runner.require(
+        SessionDisclosurePolicy.afterStateChange(
+            current: false,
+            state: .needsApproval
+        ),
+        "A fresh attention state should reveal the session once"
+    )
+}
+
 runner.run("numbered Markdown lists keep one continuous sequence") {
     let blocks = MarkdownBlockParser.parse(
         """

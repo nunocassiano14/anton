@@ -169,9 +169,6 @@ struct NotchRootView: View {
                             controller.copyResponse(sessionID: session.id)
                         }
                     }
-                    quickAction("Open terminal", icon: "terminal") {
-                        controller.focus(sessionID: session.id)
-                    }
                     quickAction("Open hub", icon: "rectangle.expand.vertical") {
                         controller.showSessionBoard(focusing: session.id)
                     }

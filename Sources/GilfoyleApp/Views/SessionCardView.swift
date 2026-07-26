@@ -22,9 +22,11 @@ struct SessionCardView: View {
         self.session = session
         self.expandedByDefault = expandedByDefault
         self._revealsDetail = State(
-            initialValue: expandedByDefault
-                || session.state.needsUser
-                || confirmEndByDefault
+            initialValue: SessionDisclosurePolicy.initial(
+                expandedByDefault: expandedByDefault,
+                state: session.state,
+                forceOpen: confirmEndByDefault
+            )
         )
         self._isConfirmingEndSession = State(initialValue: confirmEndByDefault)
     }
@@ -32,7 +34,7 @@ struct SessionCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             summary
-            if revealsDetail || session.state.needsUser {
+            if revealsDetail {
                 detail
                     .padding(.leading, 45)
                     .padding(.top, 12)
@@ -47,19 +49,13 @@ struct SessionCardView: View {
             if value { revealsDetail = true }
         }
         .onChange(of: session.state) { _, state in
+            revealsDetail = SessionDisclosurePolicy.afterStateChange(
+                current: revealsDetail,
+                state: state
+            )
             if state == .disconnected {
                 isConfirmingEndSession = false
             }
-        }
-        .contextMenu {
-            Button("Open terminal") { controller.focus(sessionID: session.id) }
-            if canEndSession {
-                Button("End session…", role: .destructive) {
-                    requestEndSessionConfirmation()
-                }
-            }
-            Divider()
-            Button("Dismiss") { controller.dismiss(sessionID: session.id) }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(
@@ -70,9 +66,7 @@ struct SessionCardView: View {
     private var summary: some View {
         HStack(spacing: 6) {
             Button {
-                if !session.state.needsUser {
-                    revealsDetail.toggle()
-                }
+                revealsDetail = SessionDisclosurePolicy.toggled(revealsDetail)
             } label: {
                 HStack(spacing: 13) {
                     AgentPixelGlyph(agent: session.agent, state: session.state, animationSeed: session.id)
@@ -202,8 +196,6 @@ struct SessionCardView: View {
                         .foregroundStyle(.white.opacity(0.28))
                     Spacer()
                     copyResponseButton
-                    Button("Open terminal") { controller.focus(sessionID: session.id) }
-                        .buttonStyle(QuietButtonStyle())
                 }
             }
         } else if session.state == .finished || session.state == .idle || session.state == .error {
@@ -223,10 +215,6 @@ struct SessionCardView: View {
                         .foregroundStyle(.white.opacity(0.28))
                     Spacer()
                     copyResponseButton
-                    Button("Open terminal") {
-                        controller.focus(sessionID: session.id)
-                    }
-                    .buttonStyle(QuietButtonStyle())
                 }
             }
         } else {
@@ -236,10 +224,6 @@ struct SessionCardView: View {
                     .foregroundStyle(.white.opacity(0.42))
                 Spacer()
                 copyResponseButton
-                Button("Open terminal") {
-                    controller.focus(sessionID: session.id)
-                }
-                .buttonStyle(QuietButtonStyle())
             }
         }
     }
