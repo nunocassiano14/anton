@@ -35,25 +35,38 @@ final class SessionStore: ObservableObject {
     }
 
     @discardableResult
-    func ingest(_ request: BridgeRequest, now: Date = Date()) -> SessionReduction {
+    func ingest(
+        _ request: BridgeRequest,
+        replacingSessionID: String? = nil,
+        now: Date = Date()
+    ) -> SessionReduction {
         let id = "\(request.agent.rawValue):\(request.event.sessionID)"
         let exactSession = sessions.first(where: { $0.id == id })
-        let discoveredSession = exactSession == nil
+        let requestedReplacement = exactSession == nil
+            ? replacingSessionID.flatMap { replacementID in
+                sessions.first(where: { $0.id == replacementID })
+            }
+            : nil
+        let syntheticSession = exactSession == nil && requestedReplacement == nil
             ? sessions.first(where: {
-                $0.agentSessionID.hasPrefix("process-")
+                (
+                    $0.agentSessionID.hasPrefix("process-")
+                        || $0.agentSessionID.hasPrefix("launch-")
+                )
                     && sameTerminal($0, request.agent, request.terminal)
             })
             : nil
-        let existing = exactSession ?? discoveredSession
+        let replacedSession = requestedReplacement ?? syntheticSession
+        let existing = exactSession ?? replacedSession
         let reduction = SessionReducer.reduce(existing: existing, request: request, now: now)
         var session = reduction.session
-        // A process-discovery entry is intentionally synthetic. The first
-        // official lifecycle hook upgrades it in place rather than creating a
-        // duplicate row for the same terminal process.
-        if discoveredSession != nil {
+        // Process-discovery and launcher entries are intentionally synthetic.
+        // The first official lifecycle hook upgrades either in place rather
+        // than creating a duplicate row for the same agent.
+        if replacedSession != nil {
             session.id = id
             session.agentSessionID = request.event.sessionID
-            sessions.removeAll(where: { $0.id == discoveredSession?.id })
+            sessions.removeAll(where: { $0.id == replacedSession?.id })
         }
         upsert(session)
         if session.state == .working {
@@ -210,6 +223,26 @@ final class SessionStore: ObservableObject {
         update(sessionID: sessionID) {
             if let name, !name.isEmpty { $0.sessionName = name }
             if let model, !model.isEmpty { $0.model = model }
+        }
+    }
+
+    func addProvisional(_ session: AgentSession) {
+        upsert(session)
+    }
+
+    func updateLaunchTerminal(sessionID: String, terminal: TerminalContext) {
+        update(sessionID: sessionID) {
+            $0.terminal = terminal
+            $0.currentActivity = "Waiting for agent startup"
+            $0.updatedAt = Date()
+        }
+    }
+
+    func markLaunchFailed(sessionID: String, message: String) {
+        update(sessionID: sessionID) {
+            $0.state = .error
+            $0.currentActivity = message
+            $0.updatedAt = Date()
         }
     }
 

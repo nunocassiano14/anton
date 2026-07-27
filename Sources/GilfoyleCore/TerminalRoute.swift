@@ -27,6 +27,13 @@ public protocol TerminalSessionControlling {
     )
 }
 
+public protocol TerminalSessionLaunching {
+    func launch(
+        plan: AgentSessionLaunchPlan,
+        completion: @escaping (Result<TerminalContext, Error>) -> Void
+    )
+}
+
 public extension TerminalSessionControlling {
     func submit(
         session: AgentSession,

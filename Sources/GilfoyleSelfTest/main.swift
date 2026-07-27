@@ -925,6 +925,18 @@ runner.run("background reply scripts do not request terminal focus") {
             && TerminalAutomationScripts.iTermClose.contains("write terminalSession text \"exit\" newline yes"),
         "Ended agents must close only their exact Terminal/iTerm session"
     )
+    try runner.require(
+        TerminalAutomationScripts.terminalLaunch.contains("do script commandText")
+            && TerminalAutomationScripts.iTermLaunch.contains(
+                "default profile command commandText"
+            ),
+        "Session creation must use the terminals' native scripting APIs"
+    )
+    try runner.require(
+        !TerminalAutomationScripts.terminalLaunch.lowercased().contains("keystroke")
+            && !TerminalAutomationScripts.iTermLaunch.lowercased().contains("keystroke"),
+        "Session creation must never depend on Accessibility keystrokes"
+    )
 }
 
 runner.run("attention cards open once but always remain collapsible") {
@@ -1294,6 +1306,81 @@ runner.run("Codex hook file is created and removed cleanly") {
     try runner.require(
         !FileManager.default.fileExists(atPath: installer.codexHooksURL.path),
         "Anton-only Codex hook file must be removed"
+    )
+}
+
+runner.run("local Claude history exposes resumable sessions without a terminal") {
+    let data = """
+    {"display":"Earlier turn","project":"/tmp/anton","sessionId":"claude-local","timestamp":1000}
+    {"display":"Latest turn","project":"/tmp/anton","sessionId":"claude-local","timestamp":3000}
+    """.data(using: .utf8) ?? Data()
+    let sessions = ResumableSessionParser.claudeHistory(data)
+    try runner.require(sessions.count == 1, "Claude history was not deduplicated")
+    try runner.require(sessions[0].title == "Latest turn", "Latest Claude title was not selected")
+    try runner.require(sessions[0].cwd == "/tmp/anton", "Claude workspace was lost")
+}
+
+runner.run("new session command is quoted and carries only the launch token") {
+    let plan = AgentSessionLaunchPlan(
+        launchToken: "launch-token",
+        agent: .claude,
+        mode: .new,
+        executablePath: "/opt/bin/claude",
+        cwd: "/tmp/Nuno's repo",
+        sessionName: "Designer's review",
+        terminalKind: .terminal
+    )
+    let command = try AgentLaunchCommandBuilder.command(for: plan)
+    try runner.require(
+        command.contains("'/tmp/Nuno'\\''s repo'"),
+        "Workspace path was not safely quoted"
+    )
+    try runner.require(
+        command.contains("'ANTON_LAUNCH_TOKEN=launch-token'"),
+        "Launch handshake token is missing"
+    )
+    try runner.require(
+        !command.contains("initial prompt"),
+        "An initial prompt leaked into process arguments"
+    )
+}
+
+runner.run("resume and fork use native Claude and Codex commands") {
+    func command(
+        agent: AgentKind,
+        mode: AgentSessionLaunchMode
+    ) throws -> String {
+        try AgentLaunchCommandBuilder.command(
+            for: AgentSessionLaunchPlan(
+                launchToken: "token",
+                agent: agent,
+                mode: mode,
+                executablePath: agent == .claude ? "/opt/bin/claude" : "/opt/bin/codex",
+                cwd: "/tmp/repo",
+                priorSessionID: "saved-id",
+                terminalKind: .terminal
+            )
+        )
+    }
+    let claudeResume = try command(agent: .claude, mode: .resume)
+    let claudeFork = try command(agent: .claude, mode: .fork)
+    let codexResume = try command(agent: .codex, mode: .resume)
+    let codexFork = try command(agent: .codex, mode: .fork)
+    try runner.require(
+        claudeResume.hasSuffix("'--resume' 'saved-id'"),
+        "Claude resume command is incorrect"
+    )
+    try runner.require(
+        claudeFork.hasSuffix("'--resume' 'saved-id' '--fork-session'"),
+        "Claude fork command is incorrect"
+    )
+    try runner.require(
+        codexResume.hasSuffix("'resume' 'saved-id'"),
+        "Codex resume command is incorrect"
+    )
+    try runner.require(
+        codexFork.hasSuffix("'fork' 'saved-id'"),
+        "Codex fork command is incorrect"
     )
 }
 

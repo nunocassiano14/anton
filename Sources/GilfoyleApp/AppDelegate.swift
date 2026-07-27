@@ -58,6 +58,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             action: #selector(openPanel),
             keyEquivalent: ""
         ).target = self
+        let newSession = menu.addItem(
+            withTitle: "New Session…",
+            action: #selector(openNewSession),
+            keyEquivalent: "n"
+        )
+        newSession.target = self
+        newSession.keyEquivalentModifierMask = [.command, .option]
+        let resumeSession = menu.addItem(
+            withTitle: "Resume Session…",
+            action: #selector(openResumeSession),
+            keyEquivalent: "r"
+        )
+        resumeSession.target = self
+        resumeSession.keyEquivalentModifierMask = [.command, .option]
+        let resumeLatest = menu.addItem(
+            withTitle: "Resume Latest",
+            action: #selector(resumeLatestSession),
+            keyEquivalent: "r"
+        )
+        resumeLatest.target = self
+        resumeLatest.keyEquivalentModifierMask = [.command, .option, .shift]
 
         menu.addItem(.separator())
         menu.addItem(
@@ -81,6 +102,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openPanel() {
         controller.showSessionBoard()
+    }
+
+    @objc private func openNewSession() {
+        controller.showSessionLauncher(mode: .new)
+    }
+
+    @objc private func openResumeSession() {
+        controller.showSessionLauncher(mode: .resume)
+    }
+
+    @objc private func resumeLatestSession() {
+        controller.resumeLatestSession()
     }
 
     @objc private func openSettings() {

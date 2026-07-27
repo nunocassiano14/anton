@@ -4,6 +4,15 @@ import Foundation
 import GilfoyleCore
 import SwiftUI
 
+private struct PendingAgentLaunch {
+    let token: String
+    let provisionalSessionID: String
+    let agent: AgentKind
+    let initialPrompt: String
+    let startedAt: Date
+    var terminal: TerminalContext
+}
+
 @MainActor
 final class AppController: ObservableObject {
     let sessionStore = SessionStore()
@@ -21,6 +30,10 @@ final class AppController: ObservableObject {
     @Published private(set) var pendingCalloutCount = 0
     @Published private(set) var compactCameraWidth: CGFloat = 150
     @Published private(set) var endingSessionIDs: Set<String> = []
+    @Published var sessionLauncherMode: AgentSessionLaunchMode?
+    @Published private(set) var resumableSessions: [ResumableAgentSession] = []
+    @Published private(set) var isLoadingSessionCatalog = false
+    @Published private(set) var sessionCatalogError: String?
     private var calloutAccessoryHeight: CGFloat = 0
     let compactAntonWingWidth: CGFloat = 55
 
@@ -48,6 +61,7 @@ final class AppController: ObservableObject {
 
     private let socketServer = UnixSocketServer()
     private let terminalAutomation: any TerminalSessionControlling
+    private let terminalLauncher: any TerminalSessionLaunching
     private let sessionTerminator: any AgentSessionTerminating
     private let processMonitor = SessionProcessMonitor()
     private let agentProcessDiscovery = CodingAgentProcessDiscovery()
@@ -57,9 +71,15 @@ final class AppController: ObservableObject {
     )
     private let shortcutManager = GlobalShortcutManager()
     private let responseBroker = InteractionResponseBroker()
+    private let sessionCatalog = LocalSessionCatalog()
+    private let sessionCatalogQueue = DispatchQueue(
+        label: "com.augustalabs.anton.session-catalog",
+        qos: .userInitiated
+    )
     private var cancellables: Set<AnyCancellable> = []
     private var pendingCallouts = PendingCalloutQueue()
     private var queuedReplies: [String: [String]] = [:]
+    private var pendingAgentLaunches: [String: PendingAgentLaunch] = [:]
 
     private var panelController: NotchPanelController?
     private var settingsWindowController: NSWindowController?
@@ -69,19 +89,61 @@ final class AppController: ObservableObject {
 
     init(
         terminalAutomation: any TerminalSessionControlling = TerminalAutomationController(),
+        terminalLauncher: any TerminalSessionLaunching = TerminalAutomationController(),
         sessionTerminator: any AgentSessionTerminating = AgentSessionTerminator()
     ) {
         self.terminalAutomation = terminalAutomation
+        self.terminalLauncher = terminalLauncher
         self.sessionTerminator = sessionTerminator
 
         preferences.$shortcut
             .sink { [weak self] shortcut in
-                try? self?.shortcutManager.register(shortcut)
+                try? self?.shortcutManager.register(shortcut, for: .toggle)
             }
             .store(in: &cancellables)
 
-        shortcutManager.action = { [weak self] in
-            self?.togglePanel()
+        try? shortcutManager.register(
+            ShortcutConfiguration(
+                keyCode: 45,
+                command: true,
+                option: true,
+                control: false,
+                shift: false
+            ),
+            for: .newSession
+        )
+        try? shortcutManager.register(
+            ShortcutConfiguration(
+                keyCode: 15,
+                command: true,
+                option: true,
+                control: false,
+                shift: false
+            ),
+            for: .resumeSession
+        )
+        try? shortcutManager.register(
+            ShortcutConfiguration(
+                keyCode: 15,
+                command: true,
+                option: true,
+                control: false,
+                shift: true
+            ),
+            for: .resumeLatest
+        )
+
+        shortcutManager.action = { [weak self] action in
+            switch action {
+            case .toggle:
+                self?.togglePanel()
+            case .newSession:
+                self?.showSessionLauncher(mode: .new)
+            case .resumeSession:
+                self?.showSessionLauncher(mode: .resume)
+            case .resumeLatest:
+                self?.resumeLatestSession()
+            }
         }
 
         sessionStore.$sessions
@@ -160,6 +222,9 @@ final class AppController: ObservableObject {
         calloutSessionID = nil
         calloutAccessoryHeight = 0
         focusedSessionID = nil
+        if !expanded {
+            sessionLauncherMode = nil
+        }
         isExpanded = expanded
         panelController?.setExpanded(expanded)
     }
@@ -176,9 +241,255 @@ final class AppController: ObservableObject {
         pendingCalloutCount = 0
         calloutSessionID = nil
         calloutAccessoryHeight = 0
+        sessionLauncherMode = nil
         focusedSessionID = sessionID
         isExpanded = true
         panelController?.setExpanded(true)
+    }
+
+    func showSessionLauncher(mode: AgentSessionLaunchMode = .new) {
+        pendingCallouts.removeAll()
+        pendingCalloutCount = 0
+        calloutSessionID = nil
+        calloutAccessoryHeight = 0
+        focusedSessionID = nil
+        sessionLauncherMode = mode
+        isExpanded = true
+        panelController?.setExpanded(true)
+        panelController?.focusForExplicitReply()
+        refreshSessionCatalog()
+    }
+
+    func closeSessionLauncher() {
+        sessionLauncherMode = nil
+        showSessionBoard()
+    }
+
+    var suggestedWorkspace: String {
+        sessionStore.sessions.first?.cwd
+            ?? resumableSessions.first(where: { !$0.cwd.isEmpty })?.cwd
+            ?? FileManager.default.homeDirectoryForCurrentUser.path
+    }
+
+    var availableLaunchTerminals: [TerminalKind] {
+        var result: [TerminalKind] = []
+        if environment.terminalInstalled { result.append(.terminal) }
+        if environment.iTermInstalled { result.append(.iTerm) }
+        return result
+    }
+
+    var defaultLaunchTerminal: TerminalKind {
+        availableLaunchTerminals.first ?? .terminal
+    }
+
+    func chooseWorkspace(completion: @escaping (String?) -> Void) {
+        panelController?.hideForSystemModal()
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        panel.prompt = "Choose workspace"
+        panel.directoryURL = URL(fileURLWithPath: suggestedWorkspace, isDirectory: true)
+        panel.begin { [weak self] response in
+            guard let self else { return }
+            self.panelController?.restoreAfterSystemModal()
+            completion(response == .OK ? panel.url?.path : nil)
+        }
+    }
+
+    func refreshSessionCatalog() {
+        guard !isLoadingSessionCatalog else { return }
+        isLoadingSessionCatalog = true
+        sessionCatalogError = nil
+        let catalog = sessionCatalog
+        sessionCatalogQueue.async { [weak self] in
+            let loaded = catalog.load()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                let running = Set(
+                    self.sessionStore.sessions.map {
+                        "\($0.agent.rawValue):\($0.agentSessionID)"
+                    }
+                )
+                self.resumableSessions = loaded.map { candidate in
+                    var candidate = candidate
+                    candidate.isRunning = running.contains(candidate.id)
+                    return candidate
+                }
+                self.isLoadingSessionCatalog = false
+                if loaded.isEmpty {
+                    self.sessionCatalogError = "No saved Claude or Codex sessions were found."
+                }
+            }
+        }
+    }
+
+    func startAgentSession(
+        agent: AgentKind,
+        mode: AgentSessionLaunchMode,
+        workspace: String,
+        name: String,
+        initialPrompt: String,
+        terminalKind: TerminalKind,
+        candidate: ResumableAgentSession? = nil
+    ) {
+        if let candidate, candidate.isRunning,
+           let running = sessionStore.sessions.first(where: {
+               $0.agent == candidate.agent
+                   && $0.agentSessionID == candidate.sessionID
+           })
+        {
+            showSessionBoard(focusing: running.id)
+            showMessage("That session is already running.")
+            return
+        }
+
+        let resolvedWorkspace = mode == .new ? workspace : (candidate?.cwd ?? workspace)
+        var isDirectory: ObjCBool = false
+        guard
+            !resolvedWorkspace.isEmpty,
+            FileManager.default.fileExists(
+                atPath: resolvedWorkspace,
+                isDirectory: &isDirectory
+            ),
+            isDirectory.boolValue
+        else {
+            sessionCatalogError = "The selected workspace no longer exists."
+            return
+        }
+        guard availableLaunchTerminals.contains(terminalKind) else {
+            sessionCatalogError = AgentSessionLaunchError.unsupportedTerminal.localizedDescription
+            return
+        }
+        let executablePath = agent == .claude
+            ? environment.claudePath
+            : environment.codexPath
+        guard let executablePath else {
+            sessionCatalogError = "\(agent.displayName) is not installed or could not be found."
+            return
+        }
+
+        let token = UUID().uuidString.lowercased()
+        let plan = AgentSessionLaunchPlan(
+            launchToken: token,
+            agent: agent,
+            mode: mode,
+            executablePath: executablePath,
+            cwd: resolvedWorkspace,
+            priorSessionID: candidate?.sessionID,
+            sessionName: name,
+            terminalKind: terminalKind
+        )
+        do {
+            _ = try AgentLaunchCommandBuilder.command(for: plan)
+        } catch {
+            sessionCatalogError = error.localizedDescription
+            return
+        }
+
+        var provisional = AgentSession(
+            agent: agent,
+            agentSessionID: "launch-\(token)",
+            cwd: resolvedWorkspace,
+            sessionName: normalizedSessionName(name)
+                ?? candidate?.title,
+            model: candidate?.model,
+            state: .working,
+            terminal: TerminalContext(kind: terminalKind)
+        )
+        provisional.currentActivity = mode == .new
+            ? "Creating session"
+            : mode == .resume ? "Resuming session" : "Forking session"
+        sessionStore.addProvisional(provisional)
+        pendingAgentLaunches[token] = PendingAgentLaunch(
+            token: token,
+            provisionalSessionID: provisional.id,
+            agent: agent,
+            initialPrompt: initialPrompt.trimmingCharacters(in: .whitespacesAndNewlines),
+            startedAt: Date(),
+            terminal: provisional.terminal
+        )
+        showSessionBoard(focusing: provisional.id)
+
+        terminalLauncher.launch(plan: plan) { [weak self] result in
+            guard let self, var pending = self.pendingAgentLaunches[token] else { return }
+            switch result {
+            case .success(let terminal):
+                pending.terminal = terminal
+                self.pendingAgentLaunches[token] = pending
+                self.sessionStore.updateLaunchTerminal(
+                    sessionID: pending.provisionalSessionID,
+                    terminal: terminal
+                )
+                self.scheduleLaunchTimeout(token: token)
+            case .failure(let error):
+                self.pendingAgentLaunches.removeValue(forKey: token)
+                self.sessionStore.markLaunchFailed(
+                    sessionID: pending.provisionalSessionID,
+                    message: "Could not start \(agent.displayName)"
+                )
+                self.showUrgentCallout(sessionID: pending.provisionalSessionID)
+                self.showMessage(error.localizedDescription)
+            }
+        }
+    }
+
+    func resumeLatestSession() {
+        let catalog = sessionCatalog
+        sessionCatalogQueue.async { [weak self] in
+            let sessions = catalog.load()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                let candidate = sessions.first(where: {
+                    !$0.cwd.isEmpty
+                        && FileManager.default.fileExists(atPath: $0.cwd)
+                })
+                guard let candidate else {
+                    self.showSessionLauncher(mode: .resume)
+                    self.showMessage("No resumable session was found.")
+                    return
+                }
+                var current = candidate
+                current.isRunning = self.sessionStore.sessions.contains {
+                    $0.agent == candidate.agent
+                        && $0.agentSessionID == candidate.sessionID
+                }
+                self.startAgentSession(
+                    agent: current.agent,
+                    mode: .resume,
+                    workspace: current.cwd,
+                    name: "",
+                    initialPrompt: "",
+                    terminalKind: self.defaultLaunchTerminal,
+                    candidate: current
+                )
+            }
+        }
+    }
+
+    private func scheduleLaunchTimeout(token: String) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
+            guard let self, let pending = self.pendingAgentLaunches[token] else { return }
+            self.sessionStore.markLaunchFailed(
+                sessionID: pending.provisionalSessionID,
+                message: "Agent startup needs attention"
+            )
+            self.showUrgentCallout(sessionID: pending.provisionalSessionID)
+            self.showMessage(
+                "The terminal opened, but \(pending.agent.displayName) did not report SessionStart."
+            )
+            // Keep the token briefly so a delayed trust/setup flow can still
+            // upgrade the provisional row when the hook eventually arrives.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 100) { [weak self] in
+                self?.pendingAgentLaunches.removeValue(forKey: token)
+            }
+        }
+    }
+
+    private func normalizedSessionName(_ name: String) -> String? {
+        let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
     }
 
     func showCompletionCallout(sessionID: String) {
@@ -203,8 +514,9 @@ final class AppController: ObservableObject {
             pendingCalloutCount = pendingCallouts.count
             return
         }
-        // The expanded board already exposes every live session. Do not
-        // interrupt active work by replacing it with a callout.
+        // The expanded board already exposes every live session. The launcher
+        // is also an intentional modal workflow, so a simultaneous completion
+        // never replaces it or steals keyboard focus.
         guard !isExpanded else { return }
         presentCallout(sessionID: sessionID)
     }
@@ -408,6 +720,9 @@ final class AppController: ObservableObject {
     }
 
     func dismiss(sessionID: String) {
+        pendingAgentLaunches = pendingAgentLaunches.filter {
+            $0.value.provisionalSessionID != sessionID
+        }
         pendingCallouts.remove(sessionID: sessionID)
         pendingCalloutCount = pendingCallouts.count
         if calloutSessionID == sessionID {
@@ -486,7 +801,11 @@ final class AppController: ObservableObject {
         request: BridgeRequest,
         respond: @escaping UnixSocketServer.ResponseHandler
     ) {
-        let reduction = sessionStore.ingest(request)
+        let pendingLaunch = matchingPendingLaunch(for: request)
+        let reduction = sessionStore.ingest(
+            request,
+            replacingSessionID: pendingLaunch?.value.provisionalSessionID
+        )
         let metadata = LocalAgentSessionMetadata.titleAndModel(
             agent: reduction.session.agent,
             sessionID: reduction.session.agentSessionID
@@ -523,6 +842,47 @@ final class AppController: ObservableObject {
             if reduction.didCompleteMainTurn {
                 deliverQueuedReplyIfNeeded(to: reduction.session)
             }
+        }
+        if request.event.name == "SessionStart", let pendingLaunch {
+            pendingAgentLaunches.removeValue(forKey: pendingLaunch.key)
+            let prompt = pendingLaunch.value.initialPrompt
+            if prompt.isEmpty {
+                showMessage("\(reduction.session.agent.displayName) session started.")
+            } else {
+                // SessionStart is emitted while the CLI is still completing
+                // startup. Give the TUI a short moment to expose its composer,
+                // then use the exact hook-owned terminal route.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) { [weak self] in
+                    self?.sendReply(prompt, to: reduction.session.id)
+                }
+            }
+            refreshSessionCatalog()
+        }
+    }
+
+    private func matchingPendingLaunch(
+        for request: BridgeRequest
+    ) -> (key: String, value: PendingAgentLaunch)? {
+        if let token = request.event.metadata["antonLaunchToken"]?.stringValue,
+           let pending = pendingAgentLaunches[token] {
+            return (token, pending)
+        }
+        return pendingAgentLaunches.first { _, pending in
+            guard pending.agent == request.agent else { return false }
+            if let lhs = pending.terminal.iTermSessionID,
+               let rhs = request.terminal.iTermSessionID,
+               TerminalRouteResolver.normalizedITermIdentifier(lhs)
+                    == TerminalRouteResolver.normalizedITermIdentifier(rhs)
+            {
+                return true
+            }
+            guard let lhs = pending.terminal.tty,
+                  let rhs = request.terminal.tty
+            else {
+                return false
+            }
+            return lhs.trimmingCharacters(in: .whitespacesAndNewlines)
+                == rhs.trimmingCharacters(in: .whitespacesAndNewlines)
         }
     }
 
@@ -622,6 +982,9 @@ final class AppController: ObservableObject {
         reason: String = "Agent process exited"
     ) {
         guard let session = sessionStore.session(id: sessionID) else { return }
+        pendingAgentLaunches = pendingAgentLaunches.filter {
+            $0.value.provisionalSessionID != sessionID
+        }
         if let interactionID = session.interaction?.id {
             _ = responseBroker.resolve(
                 requestID: interactionID,
@@ -785,13 +1148,34 @@ final class AppController: ObservableObject {
                             to: destination.appendingPathComponent("05-session-board.png")
                         )
 
-                        self.showSettings()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
+                        self.showSessionLauncher(mode: .new)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                             guard let self else { return }
                             self.capture(
-                                window: self.settingsWindowController?.window,
-                                to: destination.appendingPathComponent("06-settings.png")
+                                window: self.panelController?.window,
+                                to: destination.appendingPathComponent("06-session-launcher-new.png")
                             )
+
+                            self.seedVisualValidationResumableSessions()
+                            self.sessionLauncherMode = .resume
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                                guard let self else { return }
+                                self.capture(
+                                    window: self.panelController?.window,
+                                    to: destination.appendingPathComponent(
+                                        "07-session-launcher-resume.png"
+                                    )
+                                )
+
+                                self.showSettings()
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
+                                    guard let self else { return }
+                                    self.capture(
+                                        window: self.settingsWindowController?.window,
+                                        to: destination.appendingPathComponent("08-settings.png")
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -917,6 +1301,41 @@ final class AppController: ObservableObject {
                 now: now.addingTimeInterval(Double(-12 - index))
             )
         }
+    }
+
+    private func seedVisualValidationResumableSessions() {
+        resumableSessions = [
+            ResumableAgentSession(
+                agent: .codex,
+                sessionID: "visual-codex-resume",
+                title: "Review session launcher behaviour",
+                cwd: "/Users/example/checkout-service",
+                updatedAt: Date().addingTimeInterval(-420),
+                model: "gpt-5.6-terra",
+                preview: "Inspect the local session catalog and verify the resume flow.",
+                gitBranch: "feature/session-launcher"
+            ),
+            ResumableAgentSession(
+                agent: .claude,
+                sessionID: "visual-claude-resume",
+                title: "Fix invoice extraction edge cases",
+                cwd: "/Users/example/checkout-service",
+                updatedAt: Date().addingTimeInterval(-3_600),
+                model: "Claude Opus",
+                preview: "Continue from the failing extraction fixtures."
+            ),
+            ResumableAgentSession(
+                agent: .claude,
+                sessionID: "visual-running",
+                title: "Implement approval queue",
+                cwd: "/Users/example/checkout-service",
+                updatedAt: Date().addingTimeInterval(-90),
+                model: "Claude Sonnet",
+                isRunning: true
+            )
+        ]
+        isLoadingSessionCatalog = false
+        sessionCatalogError = nil
     }
 
     private func capture(window: NSWindow?, to destination: URL) {

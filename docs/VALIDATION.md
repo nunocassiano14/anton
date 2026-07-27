@@ -35,6 +35,10 @@ Current coverage:
 - Invalid-token rejection before the application handler
 - Duplicate startup rejection without unlinking the supervised IPC socket
 - Background prompt submission retry without terminal focus or extra text
+- Claude and Codex local session-history parsing and deduplication
+- Safe shell quoting for workspace paths and session names
+- Native New, Resume, and Fork CLI command contracts
+- Initial-prompt exclusion from process arguments
 
 The same core behavior is represented in Swift Testing files under `Tests/GilfoyleCoreTests`.
 
@@ -58,6 +62,11 @@ These checks require the built app, macOS permission dialogs, and interactive lo
 - [ ] Trust Codex hooks with `/hooks`
 - [x] Start Claude Code in Terminal.app
 - [x] Start Codex in iTerm2
+- [ ] Start a new Claude session from Anton with an initial prompt
+- [ ] Resume and fork one saved Claude session from Anton
+- [ ] Resume and fork one saved Codex session from Anton
+- [ ] Confirm opening the Resume browser does not open Terminal
+- [ ] Confirm an already-running saved session is focused rather than duplicated
 - [x] Confirm both appear automatically
 - [x] Confirm Working and Finished states
 - [x] Confirm one visual callout per main turn
@@ -93,3 +102,17 @@ Installing the final ad-hoc signature invalidated prior macOS Automation consent
 - Ran the 30-case standalone suite and a production build without warnings.
 - Captured compact, onboarding, callout, board, and Settings states from the installed binary.
 - Completed a post-install soak with no new crash reports; CPU stayed near 4% with five live CLIs.
+
+## Session launcher audit, 2026-07-27
+
+- Added read-only Claude/Codex history adapters and deterministic
+  New/Resume/Fork command construction.
+- Compiled both Terminal.app and iTerm2 launch AppleScripts without invoking
+  Accessibility keystrokes.
+- Ran the 45-case standalone suite and production build without warnings.
+- Captured and inspected New and Resume launcher states at the installed panel
+  size, including running-session and missing-workspace states.
+- Installed the signed local bundle and confirmed the launchd-supervised
+  process, private socket, and IPC token permissions.
+- Real New/Resume/Fork agent launches remain intentionally unchecked in the
+  manual checklist because they create or mutate actual agent conversations.

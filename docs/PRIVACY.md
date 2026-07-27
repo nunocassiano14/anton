@@ -38,9 +38,19 @@ response preview, and a short safe activity label such as `Searching the web`,
 prompts, and full transcripts are not retained as activity metadata and never
 leave the Mac.
 
+The Resume browser reads a bounded tail of Claude's existing
+`~/.claude/history.jsonl` and performs a read-only query against Codex's
+existing `~/.codex/state_5.sqlite` (falling back to the local session index).
+It keeps the parsed catalog in memory, hides preview text by default, and does
+not create or synchronize an Anton history database. Claude's local index can
+use prompt text as the display title for unnamed sessions, as its native Resume
+picker does; the Anton launcher labels this explicitly.
+
 ## Data stored
 
-The session board and current interactions stay in memory and disappear when Anton quits.
+The session board, current interactions, and resumable-session catalog stay in
+memory and disappear when Anton quits. The catalog is rebuilt from the agents'
+own local indexes when requested.
 
 The following local operational data persists:
 

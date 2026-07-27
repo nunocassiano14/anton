@@ -52,6 +52,10 @@ struct RoutingAndPreferencesTests {
         #expect(TerminalAutomationScripts.terminalClose.contains("close terminalWindow"))
         #expect(TerminalAutomationScripts.terminalClose.contains("do script \"exit\" in terminalTab"))
         #expect(TerminalAutomationScripts.iTermClose.contains("write terminalSession text \"exit\" newline yes"))
+        #expect(TerminalAutomationScripts.terminalLaunch.contains("do script commandText"))
+        #expect(TerminalAutomationScripts.iTermLaunch.contains("default profile command commandText"))
+        #expect(!TerminalAutomationScripts.terminalLaunch.lowercased().contains("keystroke"))
+        #expect(!TerminalAutomationScripts.iTermLaunch.lowercased().contains("keystroke"))
     }
 
     @Test("Attention cards open automatically but remain user-collapsible")

@@ -27,8 +27,14 @@ struct NotchRootView: View {
                 completionCallout(session: calloutSession)
                     .transition(.opacity.combined(with: .scale(scale: 0.985, anchor: .top)))
             } else if controller.isExpanded {
-                sessionBoard
-                    .transition(.opacity.combined(with: .scale(scale: 0.985, anchor: .top)))
+                if controller.sessionLauncherMode != nil {
+                    SessionLauncherView(controller: controller)
+                        .id(controller.sessionLauncherMode)
+                        .transition(.opacity.combined(with: .scale(scale: 0.985, anchor: .top)))
+                } else {
+                    sessionBoard
+                        .transition(.opacity.combined(with: .scale(scale: 0.985, anchor: .top)))
+                }
             } else {
                 compactContent
                     .transition(.opacity)
@@ -462,6 +468,14 @@ struct NotchRootView: View {
                     .foregroundStyle(.white.opacity(0.38))
                 Spacer()
                 Button {
+                    controller.showSessionLauncher(mode: .new)
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(NotchIconButtonStyle())
+                .help("New or resume session")
+
+                Button {
                     controller.showSettings()
                 } label: {
                     Image(systemName: "gearshape")
@@ -499,6 +513,20 @@ struct NotchRootView: View {
             Text("Start Claude Code or Codex in Terminal or iTerm.")
                 .font(.system(size: 12))
                 .foregroundStyle(.white.opacity(0.42))
+            Button {
+                controller.showSessionLauncher(mode: .new)
+            } label: {
+                Label("Start or resume a session", systemImage: "plus")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color.white.opacity(0.09))
+                    )
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white.opacity(0.72))
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
