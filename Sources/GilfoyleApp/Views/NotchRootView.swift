@@ -473,7 +473,15 @@ struct NotchRootView: View {
                     Image(systemName: "plus")
                 }
                 .buttonStyle(NotchIconButtonStyle())
-                .help("New or resume session")
+                .help("New session · ⌥⌘N")
+
+                Button {
+                    controller.showSessionLauncher(mode: .resume)
+                } label: {
+                    Image(systemName: "clock.arrow.circlepath")
+                }
+                .buttonStyle(NotchIconButtonStyle())
+                .help("Resume session · ⌥⌘R")
 
                 Button {
                     controller.showSettings()
@@ -513,20 +521,37 @@ struct NotchRootView: View {
             Text("Start Claude Code or Codex in Terminal or iTerm.")
                 .font(.system(size: 12))
                 .foregroundStyle(.white.opacity(0.42))
-            Button {
-                controller.showSessionLauncher(mode: .new)
-            } label: {
-                Label("Start or resume a session", systemImage: "plus")
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color.white.opacity(0.09))
-                    )
+            HStack(spacing: 8) {
+                Button {
+                    controller.showSessionLauncher(mode: .new)
+                } label: {
+                    Label("New session", systemImage: "plus")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Color.white.opacity(0.11))
+                        )
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white.opacity(0.78))
+
+                Button {
+                    controller.showSessionLauncher(mode: .resume)
+                } label: {
+                    Label("Resume", systemImage: "clock.arrow.circlepath")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Color.white.opacity(0.055))
+                        )
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white.opacity(0.52))
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.white.opacity(0.72))
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

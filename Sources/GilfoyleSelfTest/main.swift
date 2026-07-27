@@ -1094,7 +1094,10 @@ runner.run("daily-use settings persist together") {
             control: true,
             shift: true
         ),
-        onboardingComplete: true
+        onboardingComplete: true,
+        lastLaunchAgent: .codex,
+        lastLaunchWorkspace: "/tmp/anton",
+        lastLaunchTerminal: .iTerm
     )
     try PreferencesRepository(defaults: defaults).save(expected)
     let loaded = PreferencesRepository(defaults: defaults).load()

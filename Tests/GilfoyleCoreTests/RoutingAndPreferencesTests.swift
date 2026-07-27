@@ -228,7 +228,10 @@ struct RoutingAndPreferencesTests {
                 control: true,
                 shift: true
             ),
-            onboardingComplete: true
+            onboardingComplete: true,
+            lastLaunchAgent: .codex,
+            lastLaunchWorkspace: "/tmp/anton",
+            lastLaunchTerminal: .iTerm
         )
 
         try repository.save(expected)

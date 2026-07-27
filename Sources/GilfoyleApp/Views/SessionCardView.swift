@@ -198,6 +198,10 @@ struct SessionCardView: View {
                     copyResponseButton
                 }
             }
+        } else if session.state == .error,
+                  session.agentSessionID.hasPrefix("launch-")
+        {
+            launchRecovery
         } else if session.state == .finished || session.state == .idle || session.state == .error {
             VStack(alignment: .leading, spacing: 9) {
                 if let preview = session.lastResponsePreview {
@@ -226,6 +230,53 @@ struct SessionCardView: View {
                 copyResponseButton
             }
         }
+    }
+
+    private var launchRecovery: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "exclamationmark.circle.fill")
+                .font(.system(size: 17))
+                .foregroundStyle(Color(red: 1, green: 0.38, blue: 0.4))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(session.currentActivity ?? "Session did not start")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.88))
+                Text(
+                    controller.canRetryLaunch(sessionID: session.id)
+                        ? "Retry with the same agent, workspace and prompt."
+                        : "Finish any trust or setup step in the existing terminal."
+                )
+                .font(.system(size: 9.5))
+                .foregroundStyle(.white.opacity(0.40))
+            }
+
+            Spacer(minLength: 10)
+
+            if controller.canRetryLaunch(sessionID: session.id) {
+                Button("Try again") {
+                    controller.retryLaunch(sessionID: session.id)
+                }
+                .buttonStyle(PrimaryButtonStyle())
+            } else {
+                Button("Open terminal") {
+                    controller.focus(sessionID: session.id)
+                }
+                .buttonStyle(QuietButtonStyle())
+            }
+        }
+        .padding(11)
+        .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(Color(red: 0.24, green: 0.055, blue: 0.065).opacity(0.62))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .stroke(
+                            Color(red: 1, green: 0.38, blue: 0.4).opacity(0.22),
+                            lineWidth: 0.8
+                        )
+                }
+        )
     }
 
     private var canEndSession: Bool {

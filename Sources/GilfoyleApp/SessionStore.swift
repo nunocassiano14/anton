@@ -233,7 +233,14 @@ final class SessionStore: ObservableObject {
     func updateLaunchTerminal(sessionID: String, terminal: TerminalContext) {
         update(sessionID: sessionID) {
             $0.terminal = terminal
-            $0.currentActivity = "Waiting for agent startup"
+            $0.currentActivity = "Connecting to agent"
+            $0.updatedAt = Date()
+        }
+    }
+
+    func updateLaunchProgress(sessionID: String, activity: String) {
+        update(sessionID: sessionID) {
+            $0.currentActivity = activity
             $0.updatedAt = Date()
         }
     }
@@ -242,6 +249,14 @@ final class SessionStore: ObservableObject {
         update(sessionID: sessionID) {
             $0.state = .error
             $0.currentActivity = message
+            $0.updatedAt = Date()
+        }
+    }
+
+    func markLaunchRetrying(sessionID: String) {
+        update(sessionID: sessionID) {
+            $0.state = .working
+            $0.currentActivity = "Opening terminal"
             $0.updatedAt = Date()
         }
     }

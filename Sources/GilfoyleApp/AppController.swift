@@ -8,8 +8,11 @@ private struct PendingAgentLaunch {
     let token: String
     let provisionalSessionID: String
     let agent: AgentKind
+    let sessionName: String?
     let initialPrompt: String
     let startedAt: Date
+    let plan: AgentSessionLaunchPlan
+    var attempt: Int
     var terminal: TerminalContext
 }
 
@@ -266,9 +269,25 @@ final class AppController: ObservableObject {
     }
 
     var suggestedWorkspace: String {
-        sessionStore.sessions.first?.cwd
+        preferences.lastLaunchWorkspace.flatMap { workspace in
+            var isDirectory: ObjCBool = false
+            return FileManager.default.fileExists(
+                atPath: workspace,
+                isDirectory: &isDirectory
+            ) && isDirectory.boolValue ? workspace : nil
+        }
+            ?? sessionStore.sessions.first?.cwd
             ?? resumableSessions.first(where: { !$0.cwd.isEmpty })?.cwd
             ?? FileManager.default.homeDirectoryForCurrentUser.path
+    }
+
+    var preferredLaunchAgent: AgentKind {
+        if let preferred = preferences.lastLaunchAgent,
+           executablePath(for: preferred) != nil
+        {
+            return preferred
+        }
+        return environment.claudePath != nil ? .claude : .codex
     }
 
     var availableLaunchTerminals: [TerminalKind] {
@@ -279,7 +298,12 @@ final class AppController: ObservableObject {
     }
 
     var defaultLaunchTerminal: TerminalKind {
-        availableLaunchTerminals.first ?? .terminal
+        if let preferred = preferences.lastLaunchTerminal,
+           availableLaunchTerminals.contains(preferred)
+        {
+            return preferred
+        }
+        return availableLaunchTerminals.first ?? .terminal
     }
 
     func chooseWorkspace(completion: @escaping (String?) -> Void) {
@@ -362,13 +386,15 @@ final class AppController: ObservableObject {
             sessionCatalogError = AgentSessionLaunchError.unsupportedTerminal.localizedDescription
             return
         }
-        let executablePath = agent == .claude
-            ? environment.claudePath
-            : environment.codexPath
+        let executablePath = executablePath(for: agent)
         guard let executablePath else {
             sessionCatalogError = "\(agent.displayName) is not installed or could not be found."
             return
         }
+        let normalizedName = normalizedSessionName(name)
+        preferences.lastLaunchAgent = agent
+        preferences.lastLaunchWorkspace = resolvedWorkspace
+        preferences.lastLaunchTerminal = terminalKind
 
         let token = UUID().uuidString.lowercased()
         let plan = AgentSessionLaunchPlan(
@@ -378,7 +404,7 @@ final class AppController: ObservableObject {
             executablePath: executablePath,
             cwd: resolvedWorkspace,
             priorSessionID: candidate?.sessionID,
-            sessionName: name,
+            sessionName: normalizedName,
             terminalKind: terminalKind
         )
         do {
@@ -392,47 +418,89 @@ final class AppController: ObservableObject {
             agent: agent,
             agentSessionID: "launch-\(token)",
             cwd: resolvedWorkspace,
-            sessionName: normalizedSessionName(name)
-                ?? candidate?.title,
+            sessionName: normalizedName
+                ?? candidate?.explicitName
+                ?? candidate?.gitBranch,
             model: candidate?.model,
             state: .working,
             terminal: TerminalContext(kind: terminalKind)
         )
         provisional.currentActivity = mode == .new
-            ? "Creating session"
-            : mode == .resume ? "Resuming session" : "Forking session"
+            ? "Opening terminal"
+            : mode == .resume ? "Opening session" : "Opening fork"
         sessionStore.addProvisional(provisional)
         pendingAgentLaunches[token] = PendingAgentLaunch(
             token: token,
             provisionalSessionID: provisional.id,
             agent: agent,
+            sessionName: normalizedName,
             initialPrompt: initialPrompt.trimmingCharacters(in: .whitespacesAndNewlines),
             startedAt: Date(),
+            plan: plan,
+            attempt: 1,
             terminal: provisional.terminal
         )
         showSessionBoard(focusing: provisional.id)
+        launchPendingAgent(token: token)
+    }
 
-        terminalLauncher.launch(plan: plan) { [weak self] result in
-            guard let self, var pending = self.pendingAgentLaunches[token] else { return }
+    private func launchPendingAgent(token: String) {
+        guard let pending = pendingAgentLaunches[token] else { return }
+        let attempt = pending.attempt
+        terminalLauncher.launch(plan: pending.plan) { [weak self] result in
+            guard
+                let self,
+                var current = self.pendingAgentLaunches[token],
+                current.attempt == attempt
+            else {
+                return
+            }
             switch result {
             case .success(let terminal):
-                pending.terminal = terminal
-                self.pendingAgentLaunches[token] = pending
+                current.terminal = terminal
+                self.pendingAgentLaunches[token] = current
                 self.sessionStore.updateLaunchTerminal(
-                    sessionID: pending.provisionalSessionID,
+                    sessionID: current.provisionalSessionID,
                     terminal: terminal
                 )
-                self.scheduleLaunchTimeout(token: token)
+                self.scheduleLaunchTimeout(token: token, attempt: attempt)
             case .failure(let error):
-                self.pendingAgentLaunches.removeValue(forKey: token)
                 self.sessionStore.markLaunchFailed(
-                    sessionID: pending.provisionalSessionID,
-                    message: "Could not start \(agent.displayName)"
+                    sessionID: current.provisionalSessionID,
+                    message: "Could not open \(current.agent.displayName)"
                 )
-                self.showUrgentCallout(sessionID: pending.provisionalSessionID)
+                self.showUrgentCallout(sessionID: current.provisionalSessionID)
                 self.showMessage(error.localizedDescription)
             }
         }
+    }
+
+    func canRetryLaunch(sessionID: String) -> Bool {
+        pendingAgentLaunches.values.contains { pending in
+            pending.provisionalSessionID == sessionID
+                && pending.terminal.tty == nil
+                && pending.terminal.iTermSessionID == nil
+        }
+    }
+
+    func retryLaunch(sessionID: String) {
+        guard let entry = pendingAgentLaunches.first(where: {
+            $0.value.provisionalSessionID == sessionID
+        }) else {
+            showMessage("This launch can no longer be retried.")
+            return
+        }
+        var pending = entry.value
+        guard pending.terminal.tty == nil,
+              pending.terminal.iTermSessionID == nil
+        else {
+            showMessage("Open the existing terminal session to finish setup.")
+            return
+        }
+        pending.attempt += 1
+        pendingAgentLaunches[entry.key] = pending
+        sessionStore.markLaunchRetrying(sessionID: sessionID)
+        launchPendingAgent(token: entry.key)
     }
 
     func resumeLatestSession() {
@@ -468,9 +536,15 @@ final class AppController: ObservableObject {
         }
     }
 
-    private func scheduleLaunchTimeout(token: String) {
+    private func scheduleLaunchTimeout(token: String, attempt: Int) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
-            guard let self, let pending = self.pendingAgentLaunches[token] else { return }
+            guard
+                let self,
+                let pending = self.pendingAgentLaunches[token],
+                pending.attempt == attempt
+            else {
+                return
+            }
             self.sessionStore.markLaunchFailed(
                 sessionID: pending.provisionalSessionID,
                 message: "Agent startup needs attention"
@@ -479,17 +553,26 @@ final class AppController: ObservableObject {
             self.showMessage(
                 "The terminal opened, but \(pending.agent.displayName) did not report SessionStart."
             )
-            // Keep the token briefly so a delayed trust/setup flow can still
-            // upgrade the provisional row when the hook eventually arrives.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 100) { [weak self] in
-                self?.pendingAgentLaunches.removeValue(forKey: token)
-            }
+            // Keep the launch token while its card exists. A delayed trust or
+            // setup flow can still upgrade this exact provisional session.
         }
     }
 
     private func normalizedSessionName(_ name: String) -> String? {
-        let value = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? nil : value
+        let value = name
+            .components(separatedBy: .newlines)
+            .first?
+            .replacingOccurrences(
+                of: #"\s+"#,
+                with: " ",
+                options: .regularExpression
+            )
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return value.isEmpty ? nil : String(value.prefix(96))
+    }
+
+    private func executablePath(for agent: AgentKind) -> String? {
+        agent == .claude ? environment.claudePath : environment.codexPath
     }
 
     func showCompletionCallout(sessionID: String) {
@@ -624,6 +707,7 @@ final class AppController: ObservableObject {
     func sendReply(
         _ text: String,
         to sessionID: String,
+        collapseAfterSend: Bool = true,
         completion: @escaping (Bool) -> Void = { _ in }
     ) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -643,7 +727,9 @@ final class AppController: ObservableObject {
                     sessionID: sessionID,
                     activity: activity
                 )
-                self.collapsePanel()
+                if collapseAfterSend {
+                    self.collapsePanel()
+                }
                 if needsAcknowledgement {
                     self.ensurePromptStarted(
                         sessionID: sessionID,
@@ -845,18 +931,86 @@ final class AppController: ObservableObject {
         }
         if request.event.name == "SessionStart", let pendingLaunch {
             pendingAgentLaunches.removeValue(forKey: pendingLaunch.key)
-            let prompt = pendingLaunch.value.initialPrompt
-            if prompt.isEmpty {
-                showMessage("\(reduction.session.agent.displayName) session started.")
-            } else {
-                // SessionStart is emitted while the CLI is still completing
-                // startup. Give the TUI a short moment to expose its composer,
-                // then use the exact hook-owned terminal route.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) { [weak self] in
-                    self?.sendReply(prompt, to: reduction.session.id)
-                }
-            }
+            completePendingLaunch(
+                pendingLaunch.value,
+                session: reduction.session
+            )
             refreshSessionCatalog()
+        }
+    }
+
+    private func completePendingLaunch(
+        _ pending: PendingAgentLaunch,
+        session: AgentSession
+    ) {
+        // SessionStart is emitted while the CLI is still completing startup.
+        // Give the TUI a short moment to expose its composer, then use the
+        // exact hook-owned terminal route for naming and prompt delivery.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) { [weak self] in
+            guard let self else { return }
+            if pending.agent == .codex, let name = pending.sessionName {
+                self.sessionStore.updateLaunchProgress(
+                    sessionID: session.id,
+                    activity: "Naming session"
+                )
+                self.terminalAutomation.send(
+                    text: "/rename \(name)",
+                    to: session
+                ) { [weak self] result in
+                    guard let self else { return }
+                    if case .failure(let error) = result {
+                        self.showMessage(
+                            "Session started, but Anton could not apply its name: "
+                                + error.localizedDescription
+                        )
+                    } else {
+                        self.sessionStore.enrich(
+                            sessionID: session.id,
+                            name: name
+                        )
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                        self.sendInitialPrompt(
+                            pending.initialPrompt,
+                            to: session
+                        )
+                    }
+                }
+            } else {
+                self.sendInitialPrompt(pending.initialPrompt, to: session)
+            }
+        }
+    }
+
+    private func sendInitialPrompt(
+        _ prompt: String,
+        to session: AgentSession
+    ) {
+        guard !prompt.isEmpty else {
+            sessionStore.updateLaunchProgress(
+                sessionID: session.id,
+                activity: "Ready"
+            )
+            showMessage("\(session.agent.displayName) session started.")
+            return
+        }
+        sessionStore.updateLaunchProgress(
+            sessionID: session.id,
+            activity: "Sending initial prompt"
+        )
+        sendReply(
+            prompt,
+            to: session.id,
+            collapseAfterSend: false
+        ) { [weak self] success in
+            guard let self, !success else { return }
+            self.sessionStore.markLaunchFailed(
+                sessionID: session.id,
+                message: "Could not send the initial prompt"
+            )
+            self.showMessage(
+                "The agent started, but Anton could not send the initial prompt."
+            )
         }
     }
 

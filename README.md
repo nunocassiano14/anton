@@ -9,7 +9,8 @@ The initial release supports Apple Silicon, macOS 14 or later, Terminal.app, iTe
 - Compact primary-display notch surface, response callout, and expandable live session board
 - Menu-bar status, Settings, setup, and quit controls
 - Global shortcut, `⌥⌘G`
-- Native New / Resume session launcher backed by local Claude and Codex history
+- Compact New-session composer with remembered agent, workspace, and terminal
+- Separate Resume browser backed by local Claude and Codex history
 - Launcher shortcuts: `⌥⌘N` New, `⌥⌘R` Resume, `⌥⇧⌘R` Resume latest
 - Claude/Codex resume and fork commands with running-session detection
 - Claude Code and Codex lifecycle adapters using official hooks

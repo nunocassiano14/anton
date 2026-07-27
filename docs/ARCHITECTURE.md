@@ -104,7 +104,15 @@ Later sparse hook events merge with existing terminal context rather than erasin
 
 ## Session launcher
 
-The launcher can enumerate local session metadata without starting a shell:
+New and Resume are separate entry points. New opens a compact task composer;
+the last valid agent, workspace, and terminal are remembered, while terminal
+selection stays under progressive disclosure. Starting creates an optimistic
+card that moves through `Opening terminal`, `Connecting to agent`, optional
+Codex naming, and `Sending initial prompt`. Prompt text is delivered only after
+the exact `SessionStart` route is known. Immediate terminal-launch failures can
+be retried from that same card without re-entering the task.
+
+The Resume browser can enumerate local session metadata without starting a shell:
 
 - Claude Code: a bounded tail of `~/.claude/history.jsonl`
 - Codex: read-only queries against `~/.codex/state_5.sqlite`, with
@@ -114,7 +122,9 @@ The launcher can enumerate local session metadata without starting a shell:
 Malformed rows are ignored, archived Codex threads are excluded, duplicates
 are reduced to their newest timestamp, and the in-memory catalog is capped.
 For Claude, Anton reads `custom-title` records only from transcripts already
-identified by that bounded history index. The UI title prefers the user's
+identified by that bounded history index. History rows whose required
+transcript no longer exists are omitted because Claude cannot resume them. The
+UI title prefers the user's
 explicit `/rename` or `--name`, then the historical Git branch, and finally an
 honest workspace label. Prompt text is never used as the visible title. Longer
 prompt/response previews stay hidden until the user explicitly enables them.

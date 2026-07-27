@@ -99,10 +99,16 @@ final class LocalSessionCatalog: @unchecked Sendable {
         )
         let liveNames = claudeLiveNames()
 
-        return sessions.map { session in
-            let transcript = transcriptURLs[session.sessionID].map {
-                boundedTail($0, maximumBytes: 262_144)
-            } ?? Data()
+        return sessions.compactMap { session in
+            // Claude's history can outlive the transcript required by
+            // `--resume`. Do not offer entries that can no longer start.
+            guard let transcriptURL = transcriptURLs[session.sessionID] else {
+                return nil
+            }
+            let transcript = boundedTail(
+                transcriptURL,
+                maximumBytes: 262_144
+            )
             let transcriptMetadata = ResumableSessionParser
                 .claudeTranscriptMetadata(transcript)
             return session.enriching(

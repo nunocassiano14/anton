@@ -14,13 +14,12 @@ struct SessionLauncherView: View {
     @State private var allWorkspaces: Bool
     @State private var selectedSessionID: String?
     @State private var showPreviews = false
+    @State private var showAdvanced = false
+    @FocusState private var promptFocused: Bool
 
     init(controller: AppController) {
         self.controller = controller
-        let initialAgent: AgentKind = controller.environment.claudePath != nil
-            ? .claude
-            : .codex
-        _agent = State(initialValue: initialAgent)
+        _agent = State(initialValue: controller.preferredLaunchAgent)
         _workspace = State(initialValue: controller.suggestedWorkspace)
         _terminalKind = State(initialValue: controller.defaultLaunchTerminal)
         _allWorkspaces = State(initialValue: controller.sessionStore.sessions.isEmpty)
@@ -41,6 +40,10 @@ struct SessionLauncherView: View {
         .onAppear {
             if mode == .resume, selectedSessionID == nil {
                 selectedSessionID = filteredSessions.first?.id
+            } else if mode == .new {
+                DispatchQueue.main.async {
+                    promptFocused = true
+                }
             }
         }
         .onChange(of: controller.resumableSessions) { _, sessions in
@@ -62,10 +65,14 @@ struct SessionLauncherView: View {
         ZStack(alignment: .top) {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Session launcher")
+                    Text(mode == .new ? "New session" : "Resume session")
                         .font(.system(size: 15.5, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.94))
-                    Text("Start fresh or continue local agent history")
+                    Text(
+                        mode == .new
+                            ? "Give an agent a task without leaving Anton"
+                            : "Continue a named local conversation"
+                    )
                         .font(.system(size: 10.5))
                         .foregroundStyle(.white.opacity(0.38))
                 }
@@ -88,142 +95,140 @@ struct SessionLauncherView: View {
         .frame(height: topCameraInset + 58, alignment: .top)
     }
 
-    private var modePicker: some View {
-        HStack(spacing: 4) {
-            launcherModeButton("New", mode: .new, shortcut: "⌥⌘N")
-            launcherModeButton("Resume", mode: .resume, shortcut: "⌥⌘R")
-        }
-        .padding(3)
-        .background(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(Color.white.opacity(0.055))
-        )
-    }
-
-    private func launcherModeButton(
-        _ title: String,
-        mode target: AgentSessionLaunchMode,
-        shortcut: String
-    ) -> some View {
-        Button {
-            controller.sessionLauncherMode = target
-        } label: {
-            HStack(spacing: 8) {
-                Text(title)
-                Text(shortcut)
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.32))
-            }
-            .font(.system(size: 12, weight: .semibold))
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(mode == target ? Color.white.opacity(0.12) : .clear)
-            )
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.white.opacity(mode == target ? 0.92 : 0.52))
-    }
-
     private var newSessionForm: some View {
-        VStack(spacing: 18) {
-            modePicker
-            HStack(alignment: .top, spacing: 24) {
-                VStack(alignment: .leading, spacing: 16) {
-                    formLabel("Agent")
-                    agentPicker
+        VStack(alignment: .leading, spacing: 16) {
+            launchContextBar
 
-                    formLabel("Workspace")
-                    workspacePicker
-
-                    if agent == .claude {
-                        formLabel("Session name · optional")
-                        launcherTextField("e.g. Baltic review", text: $sessionName)
+            VStack(alignment: .leading, spacing: 9) {
+                Text("What should \(agent.displayName) work on?")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.80))
+                ZStack(alignment: .topLeading) {
+                    TextEditor(text: $initialPrompt)
+                        .focused($promptFocused)
+                        .font(.system(size: 14))
+                        .lineSpacing(3)
+                        .scrollContentBackground(.hidden)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 10)
+                    if initialPrompt.isEmpty {
+                        Text("Describe the task. Anton sends it only after the agent is connected…")
+                            .font(.system(size: 13.5))
+                            .foregroundStyle(.white.opacity(0.25))
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 17)
+                            .allowsHitTesting(false)
                     }
-
-                    formLabel("Initial prompt · optional")
-                    ZStack(alignment: .topLeading) {
-                        TextEditor(text: $initialPrompt)
-                            .font(.system(size: 12.5))
-                            .scrollContentBackground(.hidden)
-                            .padding(8)
-                            .frame(minHeight: 108, maxHeight: 150)
-                        if initialPrompt.isEmpty {
-                            Text("Sent only after the agent is ready…")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.white.opacity(0.28))
-                                .padding(.horizontal, 13)
-                                .padding(.vertical, 14)
-                                .allowsHitTesting(false)
-                        }
-                    }
-                    .background(fieldSurface)
                 }
-                .frame(maxWidth: .infinity)
+                .frame(minHeight: 190, maxHeight: 250)
+                .background(composerSurface)
+            }
 
-                VStack(alignment: .leading, spacing: 16) {
-                    formLabel("Terminal")
-                    terminalPicker
-                    launchExplanation
-                    Spacer(minLength: 0)
-                    Button {
-                        startNewSession()
-                    } label: {
-                        Label("Start \(agent.displayName)", systemImage: "play.fill")
-                            .font(.system(size: 12.5, weight: .semibold))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 11)
+            HStack(spacing: 10) {
+                launcherTextField(
+                    "Session name · optional, otherwise branch",
+                    text: $sessionName
+                )
+                Button {
+                    withAnimation(.easeOut(duration: 0.16)) {
+                        showAdvanced.toggle()
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.black.opacity(0.88))
-                    .background(
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .fill(Color.white.opacity(canStartNew ? 0.92 : 0.25))
+                } label: {
+                    Label(
+                        showAdvanced ? "Hide options" : "Options",
+                        systemImage: "slider.horizontal.3"
                     )
-                    .disabled(!canStartNew)
-                    .keyboardShortcut(.return, modifiers: [.command])
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .frame(height: 36)
+                    .padding(.horizontal, 11)
                 }
-                .frame(width: 245)
+                .buttonStyle(.plain)
+                .foregroundStyle(.white.opacity(showAdvanced ? 0.76 : 0.46))
+                .background(fieldSurface)
+            }
+
+            if showAdvanced {
+                advancedLaunchOptions
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Anton opens \(terminalKind.displayName) in the background")
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.45))
+                    Text("Opening → connecting → sending prompt")
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(.white.opacity(0.25))
+                }
+                Spacer()
+                Button {
+                    startNewSession()
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(
+                            initialPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                ? "Open \(agent.displayName)"
+                                : "Start \(agent.displayName)"
+                        )
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 10, weight: .bold))
+                    }
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .padding(.horizontal, 18)
+                    .frame(height: 40)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.black.opacity(0.88))
+                .background(
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(Color.white.opacity(canStartNew ? 0.92 : 0.25))
+                )
+                .disabled(!canStartNew)
+                .keyboardShortcut(.return, modifiers: [.command])
             }
         }
         .padding(.horizontal, 24)
-        .padding(.top, 18)
+        .padding(.top, 20)
+        .padding(.bottom, 18)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
-    private var agentPicker: some View {
-        HStack(spacing: 8) {
-            ForEach(AgentKind.allCases, id: \.self) { choice in
-                Button {
-                    agent = choice
-                } label: {
-                    HStack(spacing: 9) {
-                        AgentPixelGlyph(agent: choice, state: .idle)
-                            .frame(width: 22, height: 22)
-                        Text(choice.displayName)
-                            .font(.system(size: 12, weight: .semibold))
-                        Spacer()
-                        if agent == choice {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 9, weight: .bold))
+    private var launchContextBar: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 3) {
+                ForEach(AgentKind.allCases, id: \.self) { choice in
+                    Button {
+                        agent = choice
+                    } label: {
+                        HStack(spacing: 7) {
+                            AgentPixelGlyph(agent: choice, state: .idle)
+                                .frame(width: 18, height: 18)
+                            Text(choice == .claude ? "Claude" : "Codex")
                         }
+                        .font(.system(size: 11, weight: .semibold))
+                        .padding(.horizontal, 10)
+                        .frame(height: 36)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(
+                                    agent == choice
+                                        ? Color.white.opacity(0.12)
+                                        : Color.clear
+                                )
+                        )
                     }
-                    .padding(.horizontal, 11)
-                    .frame(height: 42)
-                    .background(
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .fill(
-                                agent == choice
-                                    ? Color.white.opacity(0.11)
-                                    : Color.white.opacity(0.045)
-                            )
-                    )
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white.opacity(agent == choice ? 0.88 : 0.36))
+                    .disabled(executableMissing(for: choice))
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.white.opacity(agent == choice ? 0.90 : 0.48))
-                .disabled(executableMissing(for: choice))
             }
+            .padding(3)
+            .background(fieldSurface)
+
+            workspacePicker
         }
     }
 
@@ -279,16 +284,50 @@ struct SessionLauncherView: View {
         }
     }
 
-    private var launchExplanation: some View {
+    private var advancedLaunchOptions: some View {
         VStack(alignment: .leading, spacing: 9) {
-            Label("Opens a new terminal tab", systemImage: "rectangle.stack.badge.play")
-            Label("Waits until the agent is ready", systemImage: "checkmark.shield")
-            Label("Prompt never enters process args", systemImage: "lock")
+            formLabel("Terminal")
+            HStack(spacing: 8) {
+                ForEach(controller.availableLaunchTerminals, id: \.rawValue) { terminal in
+                    Button {
+                        terminalKind = terminal
+                    } label: {
+                        HStack(spacing: 7) {
+                            Image(
+                                systemName: terminal == .terminal
+                                    ? "apple.terminal"
+                                    : "macwindow"
+                            )
+                            Text(terminal.displayName)
+                            if terminalKind == terminal {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 8, weight: .bold))
+                            }
+                        }
+                        .font(.system(size: 10.5, weight: .medium))
+                        .padding(.horizontal, 10)
+                        .frame(height: 34)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(
+                                    terminalKind == terminal
+                                        ? Color.white.opacity(0.10)
+                                        : Color.white.opacity(0.035)
+                                )
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(
+                        .white.opacity(terminalKind == terminal ? 0.78 : 0.36)
+                    )
+                }
+                Spacer()
+                Label("Remembered for next time", systemImage: "clock.arrow.circlepath")
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.white.opacity(0.25))
+            }
         }
-        .font(.system(size: 10.5, weight: .medium))
-        .foregroundStyle(.white.opacity(0.42))
-        .padding(13)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(Color.white.opacity(0.035))
@@ -297,7 +336,6 @@ struct SessionLauncherView: View {
 
     private var resumeBrowser: some View {
         VStack(spacing: 14) {
-            modePicker
             HStack(spacing: 10) {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
@@ -658,6 +696,15 @@ struct SessionLauncherView: View {
             .overlay {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .stroke(Color.white.opacity(0.08), lineWidth: 0.7)
+            }
+    }
+
+    private var composerSurface: some View {
+        RoundedRectangle(cornerRadius: 11, style: .continuous)
+            .fill(Color.white.opacity(0.055))
+            .overlay {
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .stroke(Color.white.opacity(0.13), lineWidth: 0.8)
             }
     }
 
