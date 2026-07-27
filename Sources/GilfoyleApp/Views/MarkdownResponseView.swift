@@ -11,7 +11,12 @@ struct MarkdownResponseView: View {
 
     var body: some View {
         SelectableMarkdownTextView(markdown: markdown)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            // AppKit views otherwise accept the full flexible height offered
+            // by a session card or callout. Pin the bridge to its measured text
+            // height so a short answer never floats at the bottom of blank
+            // space.
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 }
 
@@ -22,8 +27,8 @@ private struct SelectableMarkdownTextView: NSViewRepresentable {
         Coordinator()
     }
 
-    func makeNSView(context: Context) -> NSTextView {
-        let textView = NSTextView(frame: .zero)
+    func makeNSView(context: Context) -> SelectableResponseTextView {
+        let textView = SelectableResponseTextView(frame: .zero)
         textView.delegate = context.coordinator
         textView.isEditable = false
         textView.isSelectable = true
@@ -36,7 +41,7 @@ private struct SelectableMarkdownTextView: NSViewRepresentable {
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.heightTracksTextView = false
         textView.isHorizontallyResizable = false
-        textView.isVerticallyResizable = true
+        textView.isVerticallyResizable = false
         textView.minSize = NSSize(width: 0, height: 1)
         textView.maxSize = NSSize(
             width: CGFloat.greatestFiniteMagnitude,
@@ -51,7 +56,10 @@ private struct SelectableMarkdownTextView: NSViewRepresentable {
         return textView
     }
 
-    func updateNSView(_ textView: NSTextView, context: Context) {
+    func updateNSView(
+        _ textView: SelectableResponseTextView,
+        context: Context
+    ) {
         guard context.coordinator.renderedMarkdown != markdown else { return }
         let priorSelection = textView.selectedRange()
         textView.textStorage?.setAttributedString(
@@ -70,7 +78,7 @@ private struct SelectableMarkdownTextView: NSViewRepresentable {
 
     func sizeThatFits(
         _ proposal: ProposedViewSize,
-        nsView textView: NSTextView,
+        nsView textView: SelectableResponseTextView,
         context: Context
     ) -> CGSize? {
         // A vertically scrolling parent can make its first fitting proposal
@@ -85,17 +93,9 @@ private struct SelectableMarkdownTextView: NSViewRepresentable {
         textView.setFrameSize(
             NSSize(width: width, height: max(1, textView.frame.height))
         )
-        guard let textContainer = textView.textContainer,
-              let layoutManager = textView.layoutManager
-        else {
-            return CGSize(width: width, height: 1)
-        }
-        textContainer.containerSize = NSSize(width: width, height: 1_000_000)
-        layoutManager.ensureLayout(for: textContainer)
-        let used = layoutManager.usedRect(for: textContainer)
         return CGSize(
             width: width,
-            height: max(1, ceil(used.height + textView.textContainerInset.height * 2))
+            height: textView.fittingHeight(for: width)
         )
     }
 
@@ -118,6 +118,37 @@ private struct SelectableMarkdownTextView: NSViewRepresentable {
             guard let url else { return false }
             NSWorkspace.shared.open(url)
             return true
+        }
+    }
+}
+
+private final class SelectableResponseTextView: NSTextView {
+    override var intrinsicContentSize: NSSize {
+        NSSize(
+            width: NSView.noIntrinsicMetric,
+            height: fittingHeight(for: max(320, bounds.width))
+        )
+    }
+
+    func fittingHeight(for width: CGFloat) -> CGFloat {
+        guard let textContainer, let layoutManager else { return 1 }
+        textContainer.containerSize = NSSize(
+            width: max(1, width),
+            height: 1_000_000
+        )
+        layoutManager.ensureLayout(for: textContainer)
+        let used = layoutManager.usedRect(for: textContainer)
+        return max(
+            1,
+            ceil(used.height + textContainerInset.height * 2)
+        )
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        let widthChanged = abs(frame.width - newSize.width) > 0.5
+        super.setFrameSize(newSize)
+        if widthChanged {
+            invalidateIntrinsicContentSize()
         }
     }
 }
@@ -381,9 +412,11 @@ private enum MarkdownTextRenderer {
             options: []
         ) { value, range, _ in
             guard let rawValue = value as? NSNumber else { return }
-            let raw = rawValue.intValue
+            let intent = InlinePresentationIntent(
+                rawValue: rawValue.uintValue
+            )
             var renderedFont = font
-            if raw & 8 != 0 {
+            if intent.contains(.code) {
                 renderedFont = NSFont.monospacedSystemFont(
                     ofSize: font.pointSize,
                     weight: .regular
@@ -394,13 +427,13 @@ private enum MarkdownTextRenderer {
                     range: range
                 )
             } else {
-                if raw & 1 != 0 {
+                if intent.contains(.emphasized) {
                     renderedFont = NSFontManager.shared.convert(
                         renderedFont,
                         toHaveTrait: .italicFontMask
                     )
                 }
-                if raw & 2 != 0 {
+                if intent.contains(.stronglyEmphasized) {
                     renderedFont = NSFontManager.shared.convert(
                         renderedFont,
                         toHaveTrait: .boldFontMask
@@ -408,7 +441,7 @@ private enum MarkdownTextRenderer {
                 }
             }
             result.addAttribute(.font, value: renderedFont, range: range)
-            if raw & 4 != 0 {
+            if intent.contains(.strikethrough) {
                 result.addAttribute(
                     .strikethroughStyle,
                     value: NSUnderlineStyle.single.rawValue,

@@ -1469,13 +1469,13 @@ final class AppController: ObservableObject {
                     cwd: "/Users/example/billing-service",
                     model: "Claude Sonnet",
                     lastAssistantMessage: """
-                    1. First market
-                    Supporting evidence for the first market.
+                    Feito. O MCP `transformation-platform` ficou autenticado.
 
-                    2. Second market
-                    Supporting evidence for the second market.
+                    Mantive:
 
-                    3. Third market
+                    - Links clicáveis.
+                    - Listas numeradas.
+                    - Seleção entre vários parágrafos.
                     """
                 ),
                 terminal: TerminalContext(
