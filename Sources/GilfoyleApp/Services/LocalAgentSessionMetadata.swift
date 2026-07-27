@@ -5,6 +5,7 @@ import GilfoyleCore
 /// and the latest response preview. The data remains on-device; prompts and
 /// transcript paths are never forwarded through Anton's bridge.
 struct LocalAgentSessionMetadata {
+    var agentSessionID: String?
     var name: String?
     var model: String?
     var cwd: String?
@@ -46,6 +47,7 @@ struct LocalAgentSessionMetadata {
             let rollout = rolloutData(session.rolloutURL)
             let lifecycle = CodexRolloutLifecycle.snapshot(in: rollout)
             return LocalAgentSessionMetadata(
+                agentSessionID: session.id,
                 name: details.name,
                 model: details.model,
                 lastResponsePreview: LocalAgentResponsePreview.codex(in: rollout),
@@ -76,6 +78,7 @@ struct LocalAgentSessionMetadata {
             state = .idle
         }
         return LocalAgentSessionMetadata(
+            agentSessionID: live.sessionID,
             name: live.name,
             model: modelFromClaudeLog(sessionID: live.sessionID),
             cwd: live.cwd,

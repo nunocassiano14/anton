@@ -9,9 +9,10 @@ The initial release supports Apple Silicon, macOS 14 or later, Terminal.app, iTe
 - Compact primary-display notch surface, response callout, and expandable live session board
 - Menu-bar status, Settings, setup, and quit controls
 - Global shortcut, `⌥⌘G`
-- Compact New-session composer with remembered agent, workspace, and terminal
+- Unified session launcher: choose Claude Code or Codex, then New or Existing
+- New-session composer with advanced workspace, branch, name, and terminal options
 - Git branch picker combining the current repo with recent Claude/Codex branches
-- Separate Resume browser backed by local Claude and Codex history
+- Named Existing-session browser backed by local Claude and Codex history
 - Launcher shortcuts: `⌥⌘N` New, `⌥⌘R` Resume, `⌥⇧⌘R` Resume latest
 - Claude/Codex resume and fork commands with running-session detection
 - Claude Code and Codex lifecycle adapters using official hooks
@@ -82,20 +83,22 @@ claude
 codex
 ```
 
-Or press `⌥⌘N` to start Claude Code or Codex from Anton. Choose the workspace,
-Git branch, terminal, and an optional initial prompt. The branch menu combines
-local branches in the selected repository with recent branch metadata from
-Claude and Codex sessions. Anton safely switches the workspace, opens the new
-terminal surface, waits for the official `SessionStart` hook, and only then
-submits the prompt to that exact session. The prompt is never placed in shell
-arguments.
+Or press `⌥⌘N` to open Anton's session launcher. First choose Claude Code or
+Codex, then choose New or Existing. New keeps the task prompt visible and puts
+workspace, Git branch, optional name, and terminal under Options. The branch
+menu combines local branches in the selected repository with recent branch
+metadata from Claude and Codex sessions. Anton safely switches the workspace,
+opens the new terminal surface, waits for the official `SessionStart` hook,
+and only then submits the prompt to that exact session. The prompt is never
+placed in shell arguments.
 
-Press `⌥⌘R` to browse saved local sessions or `⌥⇧⌘R` to resume the most
-recent one. Anton reads Claude's local history index and Codex's local thread
-database directly; opening the browser does not start Terminal. Previews are
-hidden until explicitly enabled. A session that is already running is opened
-on the live board rather than launched twice. Resume and Fork create a terminal
-surface only after the user chooses the action.
+Choose Existing, or press `⌥⌘R`, to browse named local sessions in the same
+launcher. `⌥⇧⌘R` resumes the most recent one. Anton reads Claude's local history
+index and Codex's local thread database directly; opening the browser does not
+start Terminal. Previews are hidden until explicitly enabled. A session that
+is already running is opened on the live board rather than launched twice.
+Resume and Fork create a terminal surface only after the user chooses the
+action.
 
 Click the compact notch surface or press `⌥⌘G` to open the board. Each flat session row identifies the agent, project, model, terminal, state, activity, start time, and last action when the hook exposes that information.
 

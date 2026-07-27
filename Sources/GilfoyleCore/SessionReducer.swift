@@ -35,7 +35,10 @@ public enum SessionReducer {
         session.cwd = request.event.cwd
         session.projectName = URL(fileURLWithPath: request.event.cwd).lastPathComponent
         session.model = request.event.model ?? session.model
-        session.terminal = mergedTerminal(existing: session.terminal, incoming: request.terminal)
+        session.terminal = SessionTerminalAssociation.merged(
+            existing: session.terminal,
+            incoming: request.terminal
+        )
         session.updatedAt = now
 
         var didCompleteMainTurn = false
@@ -146,22 +149,6 @@ public enum SessionReducer {
             || normalized == "ask_user_question"
             || normalized == "request_user_input"
             || normalized == "tool/requestuserinput"
-    }
-
-    private static func mergedTerminal(
-        existing: TerminalContext,
-        incoming: TerminalContext
-    ) -> TerminalContext {
-        TerminalContext(
-            kind: incoming.kind == .unknown ? existing.kind : incoming.kind,
-            termProgram: incoming.termProgram ?? existing.termProgram,
-            terminalSessionID: incoming.terminalSessionID ?? existing.terminalSessionID,
-            iTermSessionID: incoming.iTermSessionID ?? existing.iTermSessionID,
-            tabTitle: incoming.tabTitle ?? existing.tabTitle,
-            tty: incoming.tty ?? existing.tty,
-            processID: incoming.processID ?? existing.processID,
-            parentProcessID: incoming.parentProcessID ?? existing.parentProcessID
-        )
     }
 
     private static func activityName(for toolName: String?) -> String {

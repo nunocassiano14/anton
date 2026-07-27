@@ -10,10 +10,7 @@ struct SessionLauncherView: View {
     @State private var sessionName = ""
     @State private var initialPrompt = ""
     @State private var terminalKind: TerminalKind
-    @State private var search = ""
-    @State private var allWorkspaces: Bool
     @State private var selectedSessionID: String?
-    @State private var showPreviews = false
     @State private var showAdvanced = false
     @State private var branchSnapshot = WorkspaceGitBranches.empty(workspace: "")
     @State private var selectedBranch: String?
@@ -31,40 +28,46 @@ struct SessionLauncherView: View {
             initialValue: WorkspaceGitBranches.empty(workspace: initialWorkspace)
         )
         _terminalKind = State(initialValue: controller.defaultLaunchTerminal)
-        _allWorkspaces = State(initialValue: controller.sessionStore.sessions.isEmpty)
     }
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider().overlay(Color.white.opacity(0.065))
-            if mode == .new {
-                newSessionForm
-            } else {
-                resumeBrowser
+            VStack(spacing: 16) {
+                primaryChoices
+                if mode == .new {
+                    newSessionFlow
+                } else {
+                    existingSessionFlow
+                }
             }
+            .padding(.horizontal, 24)
+            .padding(.top, 18)
+            .padding(.bottom, 16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             footer
         }
         .foregroundStyle(.white)
         .onAppear {
-            if mode == .resume, selectedSessionID == nil {
-                selectedSessionID = filteredSessions.first?.id
-            } else if mode == .new {
+            selectFirstExistingSessionIfNeeded()
+            if mode == .new {
                 refreshBranchContext()
-                DispatchQueue.main.async {
-                    promptFocused = true
-                }
+                focusPrompt()
             }
         }
-        .onChange(of: controller.resumableSessions) { _, sessions in
-            guard selectedSessionID == nil else { return }
-            selectedSessionID = filteredSessions.first?.id ?? sessions.first?.id
+        .onChange(of: controller.resumableSessions) { _, _ in
+            selectFirstExistingSessionIfNeeded(force: true)
+        }
+        .onChange(of: agent) { _, _ in
+            selectFirstExistingSessionIfNeeded(force: true)
         }
         .onChange(of: mode) { _, newMode in
-            if newMode == .resume {
-                selectedSessionID = filteredSessions.first?.id
-            } else {
+            if newMode == .new {
                 refreshBranchContext()
+                focusPrompt()
+            } else {
+                selectedSessionID = existingSessions.first?.id
             }
         }
         .onChange(of: workspace) { _, _ in
@@ -80,14 +83,10 @@ struct SessionLauncherView: View {
         ZStack(alignment: .top) {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(mode == .new ? "New session" : "Resume session")
+                    Text("Start session")
                         .font(.system(size: 15.5, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.94))
-                    Text(
-                        mode == .new
-                            ? "Give an agent a task without leaving Anton"
-                            : "Continue a named local conversation"
-                    )
+                    Text("Choose an agent, then start fresh or continue")
                         .font(.system(size: 10.5))
                         .foregroundStyle(.white.opacity(0.38))
                 }
@@ -110,41 +109,89 @@ struct SessionLauncherView: View {
         .frame(height: topCameraInset + 58, alignment: .top)
     }
 
-    private var newSessionForm: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            launchContextBar
+    private var primaryChoices: some View {
+        HStack(spacing: 12) {
+            selectorGroup {
+                agentSelector(.claude, title: "Claude Code")
+                agentSelector(.codex, title: "Codex")
+            }
 
-            VStack(alignment: .leading, spacing: 9) {
+            selectorGroup {
+                modeSelector(.new, title: "New", icon: "plus")
+                modeSelector(
+                    .resume,
+                    title: "Existing",
+                    icon: "clock.arrow.circlepath"
+                )
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func selectorGroup<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        HStack(spacing: 3) {
+            content()
+        }
+        .padding(3)
+        .background(fieldSurface)
+    }
+
+    private func agentSelector(_ choice: AgentKind, title: String) -> some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.16)) {
+                agent = choice
+            }
+        } label: {
+            HStack(spacing: 7) {
+                AgentPixelGlyph(agent: choice, state: .idle)
+                    .frame(width: 18, height: 18)
+                Text(title)
+            }
+            .font(.system(size: 11, weight: .semibold))
+            .padding(.horizontal, 11)
+            .frame(height: 36)
+            .background(selectorHighlight(selected: agent == choice))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.white.opacity(agent == choice ? 0.90 : 0.38))
+        .disabled(executableMissing(for: choice))
+    }
+
+    private func modeSelector(
+        _ choice: AgentSessionLaunchMode,
+        title: String,
+        icon: String
+    ) -> some View {
+        Button {
+            withAnimation(.easeOut(duration: 0.16)) {
+                controller.sessionLauncherMode = choice
+            }
+        } label: {
+            Label(title, systemImage: icon)
+                .font(.system(size: 11, weight: .semibold))
+                .padding(.horizontal, 11)
+                .frame(height: 36)
+                .background(selectorHighlight(selected: mode == choice))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.white.opacity(mode == choice ? 0.90 : 0.38))
+    }
+
+    private func selectorHighlight(selected: Bool) -> some View {
+        RoundedRectangle(cornerRadius: 7, style: .continuous)
+            .fill(selected ? Color.white.opacity(0.12) : Color.clear)
+    }
+
+    private var newSessionFlow: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
                 Text("What should \(agent.displayName) work on?")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.80))
-                ZStack(alignment: .topLeading) {
-                    TextEditor(text: $initialPrompt)
-                        .focused($promptFocused)
-                        .font(.system(size: 14))
-                        .lineSpacing(3)
-                        .scrollContentBackground(.hidden)
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 10)
-                    if initialPrompt.isEmpty {
-                        Text("Describe the task. Anton sends it only after the agent is connected…")
-                            .font(.system(size: 13.5))
-                            .foregroundStyle(.white.opacity(0.25))
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 17)
-                            .allowsHitTesting(false)
-                    }
-                }
-                .frame(minHeight: 190, maxHeight: 250)
-                .background(composerSurface)
-            }
-
-            HStack(spacing: 10) {
-                branchPicker
-                launcherTextField(
-                    "Session name · optional",
-                    text: $sessionName
-                )
+                Spacer()
                 Button {
                     withAnimation(.easeOut(duration: 0.16)) {
                         showAdvanced.toggle()
@@ -155,16 +202,36 @@ struct SessionLauncherView: View {
                         systemImage: "slider.horizontal.3"
                     )
                     .font(.system(size: 10.5, weight: .semibold))
-                    .frame(height: 36)
-                    .padding(.horizontal, 11)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.white.opacity(showAdvanced ? 0.76 : 0.46))
-                .background(fieldSurface)
+                .foregroundStyle(.white.opacity(showAdvanced ? 0.72 : 0.38))
             }
 
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $initialPrompt)
+                    .focused($promptFocused)
+                    .font(.system(size: 14))
+                    .lineSpacing(3)
+                    .scrollContentBackground(.hidden)
+                    .padding(.horizontal, 11)
+                    .padding(.vertical, 10)
+                if initialPrompt.isEmpty {
+                    Text(
+                        "Describe the task. Anton sends it after "
+                            + "\(agent.displayName) is connected…"
+                    )
+                    .font(.system(size: 13.5))
+                    .foregroundStyle(.white.opacity(0.25))
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 17)
+                    .allowsHitTesting(false)
+                }
+            }
+            .frame(minHeight: showAdvanced ? 165 : 235)
+            .background(composerSurface)
+
             if showAdvanced {
-                advancedLaunchOptions
+                newSessionOptions
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
@@ -175,6 +242,8 @@ struct SessionLauncherView: View {
                     Text(launchSummary)
                         .font(.system(size: 10.5, weight: .medium))
                         .foregroundStyle(.white.opacity(0.45))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                     Text("Opening → connecting → sending prompt")
                         .font(.system(size: 9.5))
                         .foregroundStyle(.white.opacity(0.25))
@@ -185,7 +254,9 @@ struct SessionLauncherView: View {
                 } label: {
                     HStack(spacing: 8) {
                         Text(
-                            initialPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            initialPrompt
+                                .trimmingCharacters(in: .whitespacesAndNewlines)
+                                .isEmpty
                                 ? "Open \(agent.displayName)"
                                 : "Start \(agent.displayName)"
                         )
@@ -198,54 +269,224 @@ struct SessionLauncherView: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.black.opacity(0.88))
-                .background(
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(Color.white.opacity(canStartNew ? 0.92 : 0.25))
-                )
+                .background(primaryButtonSurface(enabled: canStartNew))
                 .disabled(!canStartNew)
                 .keyboardShortcut(.return, modifiers: [.command])
             }
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 20)
-        .padding(.bottom, 18)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
-    private var launchContextBar: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 3) {
-                ForEach(AgentKind.allCases, id: \.self) { choice in
-                    Button {
-                        agent = choice
-                    } label: {
-                        HStack(spacing: 7) {
-                            AgentPixelGlyph(agent: choice, state: .idle)
-                                .frame(width: 18, height: 18)
-                            Text(choice == .claude ? "Claude" : "Codex")
-                        }
-                        .font(.system(size: 11, weight: .semibold))
-                        .padding(.horizontal, 10)
-                        .frame(height: 36)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .fill(
-                                    agent == choice
-                                        ? Color.white.opacity(0.12)
-                                        : Color.clear
-                                )
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.white.opacity(agent == choice ? 0.88 : 0.36))
-                    .disabled(executableMissing(for: choice))
+    private var newSessionOptions: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 10) {
+                workspacePicker
+                branchPicker
+            }
+            HStack(spacing: 10) {
+                launcherTextField("Session name · optional", text: $sessionName)
+                terminalMenu
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.white.opacity(0.035))
+        )
+    }
+
+    private var existingSessionFlow: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Existing \(agent.displayName) sessions")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.80))
+                    Text("Names come from /rename, --name or the Git branch")
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(.white.opacity(0.30))
+                }
+                Spacer()
+                if !controller.isLoadingSessionCatalog {
+                    Text("\(existingSessions.count)")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.30))
                 }
             }
-            .padding(3)
-            .background(fieldSurface)
 
-            workspacePicker
+            Group {
+                if controller.isLoadingSessionCatalog {
+                    loadingSessions
+                } else if existingSessions.isEmpty {
+                    emptyExistingSessions
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 7) {
+                            ForEach(existingSessions) { session in
+                                Button {
+                                    selectedSessionID = session.id
+                                } label: {
+                                    existingSessionRow(session)
+                                }
+                                .buttonStyle(.plain)
+                                .contextMenu {
+                                    if !session.isRunning {
+                                        Button("Fork as new session") {
+                                            launchExisting(session, mode: .fork)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.vertical, 1)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            existingSessionAction
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private func existingSessionRow(
+        _ session: ResumableAgentSession
+    ) -> some View {
+        let selected = selectedSessionID == session.id
+        let available = !session.cwd.isEmpty && workspaceExists(session.cwd)
+        return HStack(spacing: 12) {
+            AgentPixelGlyph(
+                agent: session.agent,
+                state: session.isRunning ? .working : .idle,
+                animationSeed: session.id
+            )
+            .frame(width: 25, height: 25)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 7) {
+                    Text(session.displayTitle)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .lineLimit(1)
+                    if session.isRunning {
+                        Text("RUNNING")
+                            .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                            .foregroundStyle(Color.green.opacity(0.80))
+                    } else if !available {
+                        Text("MISSING WORKSPACE")
+                            .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                            .foregroundStyle(Color.orange.opacity(0.72))
+                    }
+                }
+                HStack(spacing: 5) {
+                    Text(projectName(session.cwd))
+                    Text("·")
+                    Text(relativeDate(session.updatedAt))
+                    if let branch = session.gitBranch,
+                       branch != session.displayTitle
+                    {
+                        Text("·")
+                        Text(branch)
+                            .lineLimit(1)
+                    }
+                }
+                .font(.system(size: 9.5))
+                .foregroundStyle(.white.opacity(0.32))
+            }
+
+            Spacer(minLength: 8)
+            Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white.opacity(selected ? 0.72 : 0.16))
+        }
+        .padding(.horizontal, 12)
+        .frame(minHeight: 58)
+        .background(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(
+                    selected
+                        ? Color.white.opacity(0.105)
+                        : Color.white.opacity(0.035)
+                )
+        )
+        .foregroundStyle(.white.opacity(selected ? 0.88 : available ? 0.62 : 0.34))
+    }
+
+    private var existingSessionAction: some View {
+        HStack(spacing: 12) {
+            if let selectedSession {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(selectedSession.displayTitle)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.50))
+                        .lineLimit(1)
+                    Text(selectedSession.cwd)
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(.white.opacity(0.25))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            } else {
+                Text("Select a session to continue")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.white.opacity(0.30))
+            }
+            Spacer()
+            Button {
+                resumeSelected(mode: .resume)
+            } label: {
+                HStack(spacing: 8) {
+                    Text(selectedSession?.isRunning == true ? "Open session" : "Resume")
+                    Image(
+                        systemName: selectedSession?.isRunning == true
+                            ? "rectangle.expand.vertical"
+                            : "arrow.counterclockwise"
+                    )
+                }
+                .font(.system(size: 12.5, weight: .semibold))
+                .padding(.horizontal, 18)
+                .frame(height: 40)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.black.opacity(0.88))
+            .background(primaryButtonSurface(enabled: canResumeSelected))
+            .disabled(!canResumeSelected)
+            .keyboardShortcut(.return, modifiers: [.command])
+        }
+    }
+
+    private var loadingSessions: some View {
+        VStack(spacing: 9) {
+            ForEach(0..<4, id: \.self) { index in
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(Color.white.opacity(index == 0 ? 0.06 : 0.035))
+                    .frame(height: 58)
+            }
+        }
+        .overlay {
+            ProgressView()
+                .controlSize(.small)
+        }
+    }
+
+    private var emptyExistingSessions: some View {
+        VStack(spacing: 10) {
+            AgentPixelGlyph(agent: agent, state: .idle)
+                .frame(width: 31, height: 31)
+                .opacity(0.50)
+            Text("No saved \(agent.displayName) sessions")
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(.white.opacity(0.54))
+            Text("Start a new one or rename a session in the CLI.")
+                .font(.system(size: 10.5))
+                .foregroundStyle(.white.opacity(0.28))
+            Button("Start new") {
+                controller.sessionLauncherMode = .new
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.70))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var workspacePicker: some View {
@@ -332,7 +573,7 @@ struct SessionLauncherView: View {
             .font(.system(size: 11, weight: .medium))
             .foregroundStyle(.white.opacity(selectedBranch == nil ? 0.38 : 0.72))
             .padding(.horizontal, 11)
-            .frame(width: 255, height: 36)
+            .frame(width: 245, height: 36)
             .background(fieldSurface)
         }
         .menuStyle(.borderlessButton)
@@ -350,330 +591,53 @@ struct SessionLauncherView: View {
         )
     }
 
-    private var terminalPicker: some View {
-        VStack(spacing: 7) {
+    private var terminalMenu: some View {
+        Menu {
             ForEach(controller.availableLaunchTerminals, id: \.rawValue) { terminal in
                 Button {
                     terminalKind = terminal
                 } label: {
                     HStack {
-                        Image(systemName: terminal == .terminal ? "apple.terminal" : "macwindow")
-                            .frame(width: 18)
                         Text(terminal.displayName)
-                        Spacer()
                         if terminalKind == terminal {
-                            Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 11))
+                            Image(systemName: "checkmark")
                         }
                     }
-                    .font(.system(size: 11.5, weight: .medium))
-                    .padding(.horizontal, 11)
-                    .frame(height: 35)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(
-                                terminalKind == terminal
-                                    ? Color.white.opacity(0.10)
-                                    : Color.white.opacity(0.035)
-                            )
-                    )
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.white.opacity(terminalKind == terminal ? 0.82 : 0.42))
-            }
-        }
-    }
-
-    private var advancedLaunchOptions: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            formLabel("Terminal")
-            HStack(spacing: 8) {
-                ForEach(controller.availableLaunchTerminals, id: \.rawValue) { terminal in
-                    Button {
-                        terminalKind = terminal
-                    } label: {
-                        HStack(spacing: 7) {
-                            Image(
-                                systemName: terminal == .terminal
-                                    ? "apple.terminal"
-                                    : "macwindow"
-                            )
-                            Text(terminal.displayName)
-                            if terminalKind == terminal {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 8, weight: .bold))
-                            }
-                        }
-                        .font(.system(size: 10.5, weight: .medium))
-                        .padding(.horizontal, 10)
-                        .frame(height: 34)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(
-                                    terminalKind == terminal
-                                        ? Color.white.opacity(0.10)
-                                        : Color.white.opacity(0.035)
-                                )
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(
-                        .white.opacity(terminalKind == terminal ? 0.78 : 0.36)
-                    )
-                }
-                Spacer()
-                Label("Remembered for next time", systemImage: "clock.arrow.circlepath")
-                    .font(.system(size: 9.5))
-                    .foregroundStyle(.white.opacity(0.25))
-            }
-        }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.white.opacity(0.035))
-        )
-    }
-
-    private var resumeBrowser: some View {
-        VStack(spacing: 14) {
-            HStack(spacing: 10) {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.34))
-                    TextField("Search name, workspace, model or session ID", text: $search)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 12))
-                }
-                .padding(.horizontal, 11)
-                .frame(height: 36)
-                .background(fieldSurface)
-
-                scopeButton(
-                    controller.sessionStore.sessions.isEmpty
-                        ? "Recent workspace"
-                        : "Current workspace",
-                    selected: !allWorkspaces
-                ) {
-                    allWorkspaces = false
-                    selectedSessionID = filteredSessions.first?.id
-                }
-                .disabled(controller.sessionStore.sessions.isEmpty)
-                scopeButton("All", selected: allWorkspaces) {
-                    allWorkspaces = true
-                    selectedSessionID = filteredSessions.first?.id
-                }
-                Button {
-                    showPreviews.toggle()
-                } label: {
-                    Image(systemName: showPreviews ? "text.bubble.fill" : "text.bubble")
-                        .frame(width: 34, height: 34)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.white.opacity(showPreviews ? 0.78 : 0.36))
-                .help(showPreviews ? "Hide private previews" : "Show local previews")
-            }
-
-            Group {
-                if controller.isLoadingSessionCatalog {
-                    ProgressView("Reading local session history…")
-                        .controlSize(.small)
-                        .foregroundStyle(.white.opacity(0.52))
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if filteredSessions.isEmpty {
-                    emptyResumeState
-                } else {
-                    HStack(spacing: 14) {
-                        sessionList
-                        selectedSessionDetail
-                    }
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .padding(.horizontal, 24)
-        .padding(.top, 18)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-    }
-
-    private var sessionList: some View {
-        ScrollView {
-            LazyVStack(spacing: 6) {
-                ForEach(filteredSessions) { session in
-                    Button {
-                        selectedSessionID = session.id
-                    } label: {
-                        sessionRow(session)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.vertical, 2)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func sessionRow(_ session: ResumableAgentSession) -> some View {
-        HStack(spacing: 11) {
-            AgentPixelGlyph(
-                agent: session.agent,
-                state: session.isRunning ? .working : .idle,
-                animationSeed: session.id
-            )
-            .frame(width: 24, height: 24)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 7) {
-                    Text(session.displayTitle)
-                        .font(.system(size: 12.5, weight: .semibold))
-                        .lineLimit(1)
-                    if session.isRunning {
-                        Text("RUNNING")
-                            .font(.system(size: 7.5, weight: .bold, design: .rounded))
-                            .foregroundStyle(Color.green.opacity(0.80))
-                    }
-                }
-                HStack(spacing: 5) {
-                    Text(session.agent == .claude ? "Claude" : "Codex")
-                    Text("·")
-                    Text(projectName(session.cwd))
-                    Text("·")
-                    Text(relativeDate(session.updatedAt))
-                }
-                .font(.system(size: 9.5))
-                .foregroundStyle(.white.opacity(0.34))
-                if showPreviews, let preview = session.preview {
-                    Text(preview)
-                        .font(.system(size: 10))
-                        .foregroundStyle(.white.opacity(0.34))
-                        .lineLimit(2)
-                        .padding(.top, 1)
-                }
-            }
-            Spacer(minLength: 6)
-            Image(systemName: "chevron.right")
-                .font(.system(size: 8, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.20))
-        }
-        .padding(.horizontal, 11)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(
-                    selectedSessionID == session.id
-                        ? Color.white.opacity(0.105)
-                        : Color.white.opacity(0.035)
+        } label: {
+            HStack(spacing: 7) {
+                Image(
+                    systemName: terminalKind == .terminal
+                        ? "apple.terminal"
+                        : "macwindow"
                 )
-        )
-        .foregroundStyle(.white.opacity(selectedSessionID == session.id ? 0.88 : 0.60))
-    }
-
-    private var selectedSessionDetail: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            if let selectedSession {
-                HStack {
-                    AgentPixelGlyph(agent: selectedSession.agent, state: .idle)
-                        .frame(width: 27, height: 27)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(selectedSession.displayTitle)
-                            .font(.system(size: 13.5, weight: .semibold))
-                            .lineLimit(2)
-                        Text(selectedSession.sessionID)
-                            .font(.system(size: 8.5, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.26))
-                            .lineLimit(1)
-                    }
-                }
-
-                detailLine("Workspace", value: selectedSession.cwd.isEmpty ? "Unknown" : selectedSession.cwd)
-                if let model = selectedSession.model {
-                    detailLine("Model", value: model)
-                }
-                if let branch = selectedSession.gitBranch {
-                    detailLine("Branch", value: branch)
-                }
-                detailLine("Updated", value: relativeDate(selectedSession.updatedAt))
-
-                if selectedSession.cwd.isEmpty || !workspaceExists(selectedSession.cwd) {
-                    Label(
-                        selectedSession.cwd.isEmpty
-                            ? "Original workspace is unavailable in the fallback index."
-                            : "This workspace no longer exists.",
-                        systemImage: "exclamationmark.triangle"
-                    )
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Color.orange.opacity(0.78))
-                }
-
-                Spacer(minLength: 0)
-
-                if selectedSession.isRunning {
-                    launcherActionButton(
-                        "Open running session",
-                        icon: "rectangle.expand.vertical",
-                        enabled: true
-                    ) {
-                        resumeSelected(mode: .resume)
-                    }
-                } else {
-                    terminalPicker
-                    launcherActionButton("Resume session", icon: "arrow.counterclockwise") {
-                        resumeSelected(mode: .resume)
-                    }
-                    .keyboardShortcut(.return, modifiers: [.command])
-                    Button {
-                        resumeSelected(mode: .fork)
-                    } label: {
-                        Label("Fork as new session", systemImage: "arrow.triangle.branch")
-                            .font(.system(size: 11.5, weight: .semibold))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 9)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.white.opacity(0.56))
-                    .background(fieldSurface)
-                    .disabled(!canResumeSelected)
-                }
-            } else {
-                Text("Select a saved session")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white.opacity(0.34))
+                Text(terminalKind.displayName)
                 Spacer()
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.28))
             }
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.white.opacity(0.62))
+            .padding(.horizontal, 11)
+            .frame(width: 155, height: 36)
+            .background(fieldSurface)
         }
-        .padding(15)
-        .frame(width: 270)
-        .frame(maxHeight: .infinity, alignment: .topLeading)
-        .background(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .fill(Color.white.opacity(0.04))
-        )
-    }
-
-    private var emptyResumeState: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "clock.arrow.circlepath")
-                .font(.system(size: 23))
-                .foregroundStyle(.white.opacity(0.34))
-            Text(controller.sessionCatalogError ?? "No matching saved sessions")
-                .font(.system(size: 12.5, weight: .medium))
-                .foregroundStyle(.white.opacity(0.54))
-            Button("Show all workspaces") {
-                allWorkspaces = true
-            }
-            .buttonStyle(.plain)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(.white.opacity(0.70))
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .menuStyle(.borderlessButton)
     }
 
     private var footer: some View {
         HStack(spacing: 7) {
             Image(systemName: "lock.fill")
                 .font(.system(size: 8))
-            Text("Local only · custom name → selected Git branch → workspace")
+            Text(
+                mode == .new
+                    ? "Local only · advanced setup stays under Options"
+                    : "Local only · session names never use prompt text"
+            )
             Spacer()
-            Text("⌘↩ start")
+            Text("⌘↩ \(mode == .new ? "start" : "resume")")
             Text("·")
             Text("esc close")
         }
@@ -686,17 +650,14 @@ struct SessionLauncherView: View {
         }
     }
 
-    private var filteredSessions: [ResumableAgentSession] {
-        ResumableSessionParser.filtered(
-            controller.resumableSessions,
-            query: search,
-            workspace: controller.sessionStore.sessions.first?.cwd,
-            allWorkspaces: allWorkspaces
-        )
+    private var existingSessions: [ResumableAgentSession] {
+        controller.resumableSessions
+            .filter { $0.agent == agent }
+            .sorted { $0.updatedAt > $1.updatedAt }
     }
 
     private var selectedSession: ResumableAgentSession? {
-        controller.resumableSessions.first { $0.id == selectedSessionID }
+        existingSessions.first { $0.id == selectedSessionID }
     }
 
     private var recentBranchReferences: [AgentBranchReference] {
@@ -744,9 +705,12 @@ struct SessionLauncherView: View {
 
     private var canResumeSelected: Bool {
         guard let selectedSession else { return false }
-        return !selectedSession.cwd.isEmpty
-            && workspaceExists(selectedSession.cwd)
-            && controller.availableLaunchTerminals.contains(terminalKind)
+        return selectedSession.isRunning
+            || (
+                !selectedSession.cwd.isEmpty
+                    && workspaceExists(selectedSession.cwd)
+                    && controller.availableLaunchTerminals.contains(terminalKind)
+            )
     }
 
     private func startNewSession() {
@@ -759,6 +723,39 @@ struct SessionLauncherView: View {
             initialPrompt: initialPrompt,
             terminalKind: terminalKind
         )
+    }
+
+    private func resumeSelected(mode: AgentSessionLaunchMode) {
+        guard let selectedSession else { return }
+        launchExisting(selectedSession, mode: mode)
+    }
+
+    private func launchExisting(
+        _ session: ResumableAgentSession,
+        mode: AgentSessionLaunchMode
+    ) {
+        controller.startAgentSession(
+            agent: session.agent,
+            mode: mode,
+            workspace: session.cwd,
+            name: "",
+            initialPrompt: "",
+            terminalKind: terminalKind,
+            candidate: session
+        )
+    }
+
+    private func selectFirstExistingSessionIfNeeded(force: Bool = false) {
+        guard mode != .new else { return }
+        if force || selectedSession == nil {
+            selectedSessionID = existingSessions.first?.id
+        }
+    }
+
+    private func focusPrompt() {
+        DispatchQueue.main.async {
+            promptFocused = true
+        }
     }
 
     private func chooseBranch(_ branch: String, workspace branchWorkspace: String) {
@@ -818,65 +815,6 @@ struct SessionLauncherView: View {
         }
     }
 
-    private func workspaceLabel(_ path: String) -> String {
-        let label = URL(fileURLWithPath: path).lastPathComponent
-        return label.isEmpty ? path : label
-    }
-
-    private func resumeSelected(mode: AgentSessionLaunchMode) {
-        guard let selectedSession else { return }
-        controller.startAgentSession(
-            agent: selectedSession.agent,
-            mode: mode,
-            workspace: selectedSession.cwd,
-            name: "",
-            initialPrompt: "",
-            terminalKind: terminalKind,
-            candidate: selectedSession
-        )
-    }
-
-    private func launcherActionButton(
-        _ title: String,
-        icon: String,
-        enabled: Bool? = nil,
-        action: @escaping () -> Void
-    ) -> some View {
-        let isEnabled = enabled ?? canResumeSelected
-        return Button(action: action) {
-            Label(title, systemImage: icon)
-                .font(.system(size: 11.5, weight: .semibold))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.black.opacity(0.86))
-        .background(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(Color.white.opacity(isEnabled ? 0.90 : 0.25))
-        )
-        .disabled(!isEnabled)
-    }
-
-    private func scopeButton(
-        _ title: String,
-        selected: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 10.5, weight: .semibold))
-                .padding(.horizontal, 10)
-                .frame(height: 34)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(selected ? Color.white.opacity(0.11) : Color.white.opacity(0.035))
-                )
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.white.opacity(selected ? 0.76 : 0.36))
-    }
-
     private func launcherTextField(
         _ placeholder: String,
         text: Binding<String>
@@ -907,25 +845,9 @@ struct SessionLauncherView: View {
             }
     }
 
-    private func formLabel(_ value: String) -> some View {
-        Text(value.uppercased())
-            .font(.system(size: 9, weight: .semibold, design: .rounded))
-            .tracking(0.8)
-            .foregroundStyle(.white.opacity(0.30))
-    }
-
-    private func detailLine(_ title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title.uppercased())
-                .font(.system(size: 8, weight: .semibold, design: .rounded))
-                .tracking(0.7)
-                .foregroundStyle(.white.opacity(0.25))
-            Text(value)
-                .font(.system(size: 10.5))
-                .foregroundStyle(.white.opacity(0.55))
-                .lineLimit(2)
-                .truncationMode(.middle)
-        }
+    private func primaryButtonSurface(enabled: Bool) -> some View {
+        RoundedRectangle(cornerRadius: 9, style: .continuous)
+            .fill(Color.white.opacity(enabled ? 0.92 : 0.25))
     }
 
     private func executableMissing(for choice: AgentKind) -> Bool {
@@ -940,15 +862,30 @@ struct SessionLauncherView: View {
             && isDirectory.boolValue
     }
 
-    private func projectName(_ path: String) -> String {
-        guard !path.isEmpty else { return "Unknown workspace" }
-        return URL(fileURLWithPath: path).lastPathComponent
+    private func projectName(_ cwd: String) -> String {
+        guard !cwd.isEmpty else { return "Unknown workspace" }
+        return URL(fileURLWithPath: cwd).lastPathComponent
+    }
+
+    private func workspaceLabel(_ path: String) -> String {
+        let label = URL(fileURLWithPath: path).lastPathComponent
+        return label.isEmpty ? path : label
     }
 
     private func relativeDate(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: date, relativeTo: Date())
+        let seconds = max(0, Date().timeIntervalSince(date))
+        switch seconds {
+        case ..<60:
+            return "now"
+        case ..<3_600:
+            return "\(Int(seconds / 60)) min ago"
+        case ..<86_400:
+            return "\(Int(seconds / 3_600)) hr ago"
+        case ..<604_800:
+            return "\(Int(seconds / 86_400)) d ago"
+        default:
+            return date.formatted(date: .abbreviated, time: .omitted)
+        }
     }
 
     private var topCameraInset: CGFloat {
@@ -957,6 +894,6 @@ struct SessionLauncherView: View {
             ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?
                 .uint32Value == mainDisplayID
         } ?? NSScreen.main
-        return screen?.safeAreaInsets.top ?? 0
+        return max(12, screen?.safeAreaInsets.top ?? 0)
     }
 }

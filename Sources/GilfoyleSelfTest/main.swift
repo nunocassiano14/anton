@@ -520,6 +520,47 @@ runner.run("Local discovery completion updates the live session once") {
     try runner.require(!stable.didCompleteMainTurn, "Repeated scans must not duplicate a callout")
 }
 
+runner.run("Agent session identity acquires its exact live terminal route") {
+    let session = AgentSession(
+        agent: .claude,
+        agentSessionID: "3381ddab-a46f-4636-86e8-47eca94146ee",
+        cwd: "/tmp/carlyle",
+        sessionName: "carlyle",
+        terminal: TerminalContext()
+    )
+    let discoveredTerminal = TerminalContext(
+        kind: .terminal,
+        tabTitle: "✳ carlyle",
+        tty: "/dev/ttys002",
+        processID: 14_056
+    )
+    try runner.require(
+        SessionTerminalAssociation.matches(
+            session,
+            agent: .claude,
+            agentSessionID: "3381ddab-a46f-4636-86e8-47eca94146ee",
+            terminal: discoveredTerminal
+        ),
+        "The durable Claude session ID must join hook state to process discovery"
+    )
+    try runner.require(
+        !SessionTerminalAssociation.matches(
+            session,
+            agent: .codex,
+            agentSessionID: "3381ddab-a46f-4636-86e8-47eca94146ee",
+            terminal: discoveredTerminal
+        ),
+        "The same local ID must never cross agent boundaries"
+    )
+    let merged = SessionTerminalAssociation.merged(
+        existing: session.terminal,
+        incoming: discoveredTerminal
+    )
+    try runner.require(merged.kind == .terminal, "The terminal app kind must be acquired")
+    try runner.require(merged.tty == "/dev/ttys002", "The exact TTY must be acquired")
+    try runner.require(merged.processID == 14_056, "The live process must be acquired")
+}
+
 runner.run("subagent completion does not finish the main turn") {
     let reduction = SessionReducer.reduce(
         existing: nil,

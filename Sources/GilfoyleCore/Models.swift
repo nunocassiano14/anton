@@ -84,6 +84,62 @@ public struct TerminalContext: Codable, Equatable, Sendable {
     }
 }
 
+/// Joins an agent's durable local session identity to the live terminal route
+/// discovered from its process. Hooks can know the Claude/Codex session ID
+/// before they know the TTY, while process discovery observes the inverse.
+/// Treating either half as a separate session makes an otherwise live session
+/// impossible to target from Anton.
+public enum SessionTerminalAssociation {
+    public static func matches(
+        _ session: AgentSession,
+        agent: AgentKind,
+        agentSessionID: String? = nil,
+        terminal: TerminalContext
+    ) -> Bool {
+        guard session.agent == agent else { return false }
+
+        if let agentSessionID = normalized(agentSessionID),
+           normalized(session.agentSessionID) == agentSessionID {
+            return true
+        }
+
+        if let lhs = session.terminal.processID,
+           let rhs = terminal.processID,
+           lhs == rhs {
+            return true
+        }
+
+        guard let lhsTTY = normalized(session.terminal.tty),
+              let rhsTTY = normalized(terminal.tty)
+        else {
+            return false
+        }
+        return lhsTTY == rhsTTY
+    }
+
+    public static func merged(
+        existing: TerminalContext,
+        incoming: TerminalContext
+    ) -> TerminalContext {
+        TerminalContext(
+            kind: incoming.kind == .unknown ? existing.kind : incoming.kind,
+            termProgram: incoming.termProgram ?? existing.termProgram,
+            terminalSessionID: incoming.terminalSessionID ?? existing.terminalSessionID,
+            iTermSessionID: incoming.iTermSessionID ?? existing.iTermSessionID,
+            tabTitle: incoming.tabTitle ?? existing.tabTitle,
+            tty: incoming.tty ?? existing.tty,
+            processID: incoming.processID ?? existing.processID,
+            parentProcessID: incoming.parentProcessID ?? existing.parentProcessID
+        )
+    }
+
+    private static func normalized(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
 public struct HookEventPayload: Codable, Equatable, Sendable {
     public var name: String
     public var sessionID: String

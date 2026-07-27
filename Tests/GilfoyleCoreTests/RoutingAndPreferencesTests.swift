@@ -29,6 +29,48 @@ struct RoutingAndPreferencesTests {
         }
     }
 
+    @Test("Agent session IDs reconcile hook state with a discovered TTY")
+    func agentSessionIdentityAcquiresTerminalRoute() {
+        let session = AgentSession(
+            agent: .claude,
+            agentSessionID: "3381ddab-a46f-4636-86e8-47eca94146ee",
+            cwd: "/tmp/carlyle",
+            sessionName: "carlyle",
+            terminal: TerminalContext()
+        )
+        let discovered = TerminalContext(
+            kind: .terminal,
+            tabTitle: "✳ carlyle",
+            tty: "/dev/ttys002",
+            processID: 14_056
+        )
+
+        #expect(
+            SessionTerminalAssociation.matches(
+                session,
+                agent: .claude,
+                agentSessionID: "3381ddab-a46f-4636-86e8-47eca94146ee",
+                terminal: discovered
+            )
+        )
+        #expect(
+            !SessionTerminalAssociation.matches(
+                session,
+                agent: .codex,
+                agentSessionID: "3381ddab-a46f-4636-86e8-47eca94146ee",
+                terminal: discovered
+            )
+        )
+
+        let merged = SessionTerminalAssociation.merged(
+            existing: session.terminal,
+            incoming: discovered
+        )
+        #expect(merged.kind == .terminal)
+        #expect(merged.tty == "/dev/ttys002")
+        #expect(merged.processID == 14_056)
+    }
+
     @Test("Background reply scripts contain no explicit terminal focus commands")
     func backgroundRepliesDoNotRequestTerminalFocus() {
         for script in [

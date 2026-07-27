@@ -53,7 +53,12 @@ final class SessionStore: ObservableObject {
                     $0.agentSessionID.hasPrefix("process-")
                         || $0.agentSessionID.hasPrefix("launch-")
                 )
-                    && sameTerminal($0, request.agent, request.terminal)
+                    && SessionTerminalAssociation.matches(
+                        $0,
+                        agent: request.agent,
+                        agentSessionID: request.event.sessionID,
+                        terminal: request.terminal
+                    )
             })
             : nil
         let replacedSession = requestedReplacement ?? syntheticSession
@@ -104,7 +109,12 @@ final class SessionStore: ObservableObject {
         var completedSessionIDs: [String] = []
         for process in processes {
             if let index = sessions.firstIndex(where: {
-                sameTerminal($0, process.agent, process.terminal)
+                SessionTerminalAssociation.matches(
+                    $0,
+                    agent: process.agent,
+                    agentSessionID: process.agentSessionID,
+                    terminal: process.terminal
+                )
             }) {
                 let previous = sessions[index]
                 let followsLocalAgentLifecycle = (process.agent == .codex || process.agent == .claude)
@@ -136,6 +146,10 @@ final class SessionStore: ObservableObject {
                     waiting.sessionName = process.sessionName ?? previous.sessionName
                     waiting.model = process.model ?? previous.model
                     waiting.lastResponsePreview = process.lastResponsePreview ?? previous.lastResponsePreview
+                    waiting.terminal = SessionTerminalAssociation.merged(
+                        existing: previous.terminal,
+                        incoming: process.terminal
+                    )
                     waiting.updatedAt = now
                     sessions[index] = waiting
                     continue
@@ -150,7 +164,12 @@ final class SessionStore: ObservableObject {
                         state: process.state,
                         now: now
                     )
-                    session = reduction.session
+                    var reconciled = reduction.session
+                    reconciled.terminal = SessionTerminalAssociation.merged(
+                        existing: previous.terminal,
+                        incoming: process.terminal
+                    )
+                    session = reconciled
                     didComplete = reduction.didCompleteMainTurn
                 } else {
                     // Interactive hook states remain authoritative. Local
@@ -163,6 +182,10 @@ final class SessionStore: ObservableObject {
                     refreshed.model = process.model ?? previous.model
                     refreshed.lastResponsePreview = process.lastResponsePreview ?? previous.lastResponsePreview
                     refreshed.currentActivity = process.activity ?? previous.currentActivity
+                    refreshed.terminal = SessionTerminalAssociation.merged(
+                        existing: previous.terminal,
+                        incoming: process.terminal
+                    )
                     refreshed.updatedAt = now
                     session = refreshed
                     didComplete = false
@@ -379,29 +402,6 @@ final class SessionStore: ObservableObject {
         case .idle: return 5
         case .disconnected: return 6
         }
-    }
-
-    /// Hook processes can report a shell parent PID while local discovery
-    /// reports the agent PID. The terminal TTY identifies the actual tab and
-    /// is the reliable fallback; keeping the agent kind prevents cross-agent
-    /// matches in a shared terminal window.
-    private func sameTerminal(
-        _ session: AgentSession,
-        _ agent: AgentKind,
-        _ terminal: TerminalContext
-    ) -> Bool {
-        guard session.agent == agent else { return false }
-        if let lhs = session.terminal.processID,
-           let rhs = terminal.processID,
-           lhs == rhs {
-            return true
-        }
-        guard let lhsTTY = session.terminal.tty?.trimmingCharacters(in: .whitespacesAndNewlines),
-              let rhsTTY = terminal.tty?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !lhsTTY.isEmpty,
-              !rhsTTY.isEmpty
-        else { return false }
-        return lhsTTY == rhsTTY
     }
 
     private func hasFreshTaskBoundary(

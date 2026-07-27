@@ -6,6 +6,7 @@ import GilfoyleCore
 /// supplies a live process/TTY/cwd placeholder until that first hook arrives.
 struct DiscoveredAgentSession: Sendable {
     let agent: AgentKind
+    let agentSessionID: String?
     let processID: Int32
     let tty: String
     let cwd: String
@@ -140,6 +141,7 @@ final class CodingAgentProcessDiscovery {
 
             return DiscoveredAgentSession(
                 agent: agent,
+                agentSessionID: metadata.agentSessionID,
                 processID: processID,
                 tty: tty,
                 cwd: metadata.cwd ?? workingDirectory(for: processID) ?? FileManager.default.homeDirectoryForCurrentUser.path,
