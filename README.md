@@ -19,6 +19,7 @@ The initial release supports Apple Silicon, macOS 14 or later, Terminal.app, iTe
 - Exact Terminal.app targeting by TTY
 - Exact iTerm2 targeting by session unique ID, with TTY fallback
 - Native reply editor compatible with normal macOS dictation and Wispr Flow
+- Continuous text selection across response lines, paragraphs, lists, and code
 - Enter to send, Shift+Enter for a newline, and Escape to close
 - Allow and Deny actions for approval requests
 - Choice buttons and free-form fields for structured questions
