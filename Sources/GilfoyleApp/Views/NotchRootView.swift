@@ -166,6 +166,7 @@ struct NotchRootView: View {
                     // view to a few pixels when the notch changes height.
                     .frame(height: responsePreviewHeight(for: preview))
                     .padding(.leading, 44)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 HStack(spacing: 7) {

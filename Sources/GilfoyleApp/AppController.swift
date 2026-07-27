@@ -1469,7 +1469,7 @@ final class AppController: ObservableObject {
                     cwd: "/Users/example/billing-service",
                     model: "Claude Sonnet",
                     lastAssistantMessage: """
-                    Feito. O MCP `transformation-platform` ficou autenticado.
+                    Feito. O MCP `transformation-platform` ficou autenticado e disponível para os próximos projetos, mantendo a configuração local e os links para evidência verificável.
 
                     Mantive:
 

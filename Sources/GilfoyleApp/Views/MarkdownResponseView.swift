@@ -90,9 +90,6 @@ private struct SelectableMarkdownTextView: NSViewRepresentable {
             320,
             proposal.width ?? max(320, textView.bounds.width)
         )
-        textView.setFrameSize(
-            NSSize(width: width, height: max(1, textView.frame.height))
-        )
         return CGSize(
             width: width,
             height: textView.fittingHeight(for: width)
@@ -148,6 +145,13 @@ private final class SelectableResponseTextView: NSTextView {
         let widthChanged = abs(frame.width - newSize.width) > 0.5
         super.setFrameSize(newSize)
         if widthChanged {
+            // `sizeThatFits` receives an estimate. The final SwiftUI frame can
+            // be narrower after card indentation and callout padding, so the
+            // text container must wrap to this actual width.
+            textContainer?.containerSize = NSSize(
+                width: max(1, newSize.width),
+                height: 1_000_000
+            )
             invalidateIntrinsicContentSize()
         }
     }
