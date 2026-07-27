@@ -2,6 +2,11 @@ import Combine
 import Foundation
 import GilfoyleCore
 
+struct SessionDiscoveryResult {
+    let completedSessionIDs: [String]
+    let exitedSessions: [AgentSession]
+}
+
 @MainActor
 final class SessionStore: ObservableObject {
     @Published private(set) var sessions: [AgentSession] = []
@@ -73,12 +78,15 @@ final class SessionStore: ObservableObject {
         )
     }
 
-    /// Reconciles the low-level process scanner with the board. Returns only
-    /// genuine work → completed transitions, so callers can present a
-    /// completion callout without announcing sessions that merely existed when
-    /// Anton launched.
+    /// Reconciles the low-level process scanner with the board. Reports
+    /// genuine work → completed transitions separately from synthetic
+    /// sessions whose processes vanished, so the app can close the latter's
+    /// exact terminal route without announcing a false completion.
     @discardableResult
-    func discover(_ processes: [DiscoveredAgentSession], now: Date = Date()) -> [String] {
+    func discover(
+        _ processes: [DiscoveredAgentSession],
+        now: Date = Date()
+    ) -> SessionDiscoveryResult {
         let liveProcessIDs = Set(processes.map(\.processID))
         var completedSessionIDs: [String] = []
         for process in processes {
@@ -177,27 +185,25 @@ final class SessionStore: ObservableObject {
 
         // Discovery is only a live fallback. If a process vanished before a
         // lifecycle hook could identify it, remove its synthetic row.
-        let vanishedSyntheticSessionIDs = sessions.compactMap { session -> String? in
-            guard
-                session.agentSessionID.hasPrefix("process-"),
-                !liveProcessIDs.contains(session.terminal.processID ?? -1)
-            else {
-                return nil
-            }
-            return session.id
+        let vanishedSyntheticSessions = sessions.filter { session in
+            session.agentSessionID.hasPrefix("process-")
+                && !liveProcessIDs.contains(session.terminal.processID ?? -1)
         }
         sessions.removeAll {
             $0.agentSessionID.hasPrefix("process-")
                 && !liveProcessIDs.contains($0.terminal.processID ?? -1)
         }
-        for sessionID in vanishedSyntheticSessionIDs {
-            awaitingResponse.remove(sessionID)
-            awaitingFreshTaskStart.remove(sessionID)
-            latestTaskTurnID.removeValue(forKey: sessionID)
-            replySentAt.removeValue(forKey: sessionID)
+        for session in vanishedSyntheticSessions {
+            awaitingResponse.remove(session.id)
+            awaitingFreshTaskStart.remove(session.id)
+            latestTaskTurnID.removeValue(forKey: session.id)
+            replySentAt.removeValue(forKey: session.id)
         }
         sortSessions()
-        return completedSessionIDs
+        return SessionDiscoveryResult(
+            completedSessionIDs: completedSessionIDs,
+            exitedSessions: vanishedSyntheticSessions
+        )
     }
 
     func enrich(sessionID: String, name: String? = nil, model: String? = nil) {
@@ -207,11 +213,17 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    @discardableResult
     func markWorking(
         sessionID: String,
         activity: String = "Prompt sent",
         awaitingReply: Bool = true
-    ) {
+    ) -> Bool {
+        // UserPromptSubmit and local process discovery can beat the terminal
+        // automation callback. In that case the authoritative activity is
+        // already visible; never overwrite "Thinking", a live tool, or a
+        // recovered completion with the weaker delivery acknowledgement.
+        guard session(id: sessionID)?.state != .working else { return false }
         update(sessionID: sessionID) {
             $0.state = .working
             $0.currentActivity = activity
@@ -223,6 +235,28 @@ final class SessionStore: ObservableObject {
             awaitingFreshTaskStart.insert(sessionID)
             replySentAt[sessionID] = Date()
         }
+        return true
+    }
+
+    func markPromptSubmissionUnconfirmed(
+        sessionID: String,
+        expectedActivity: String
+    ) {
+        guard
+            let session = session(id: sessionID),
+            session.state == .working,
+            session.currentActivity == expectedActivity
+        else {
+            return
+        }
+        update(sessionID: sessionID) {
+            $0.state = .error
+            $0.currentActivity = "Prompt submission was not acknowledged"
+            $0.updatedAt = Date()
+        }
+        awaitingResponse.remove(sessionID)
+        awaitingFreshTaskStart.remove(sessionID)
+        replySentAt.removeValue(forKey: sessionID)
     }
 
     func resolveInteraction(sessionID: String, nextState: AgentSessionState = .working) {

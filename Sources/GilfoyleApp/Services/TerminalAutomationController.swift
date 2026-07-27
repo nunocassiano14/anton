@@ -34,9 +34,25 @@ final class TerminalAutomationController: TerminalSessionControlling {
         perform(action: .send, session: session, text: text, completion: completion)
     }
 
+    func submit(
+        session: AgentSession,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        perform(action: .submit, session: session, text: nil, completion: completion)
+    }
+
+    func close(
+        session: AgentSession,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        perform(action: .close, session: session, text: nil, completion: completion)
+    }
+
     private enum Action {
         case focus
         case send
+        case submit
+        case close
     }
 
     private func perform(
@@ -49,13 +65,13 @@ final class TerminalAutomationController: TerminalSessionControlling {
         // even when the AppleScript contains no explicit `activate`. Remember
         // the user's current app so a background reply can restore it before
         // Anton reports that delivery has completed.
-        let foregroundApplication = action == .send
+        let foregroundApplication = action == .send || action == .submit || action == .close
             ? NSWorkspace.shared.frontmostApplication
             : nil
 
         func finish(_ result: Result<Void, Error>) {
             DispatchQueue.main.async {
-                if action == .send,
+                if action == .send || action == .submit || action == .close,
                    let foregroundApplication,
                    !foregroundApplication.isTerminated
                 {
@@ -75,6 +91,16 @@ final class TerminalAutomationController: TerminalSessionControlling {
                             TerminalAutomationScripts.terminalSend,
                             arguments: [tty, text ?? ""]
                         )
+                    } else if action == .submit {
+                        result = try self.runAppleScript(
+                            TerminalAutomationScripts.terminalSubmit,
+                            arguments: [tty]
+                        )
+                    } else if action == .close {
+                        result = try self.runAppleScript(
+                            TerminalAutomationScripts.terminalClose,
+                            arguments: [tty]
+                        )
                     } else {
                         result = try self.runAppleScript(
                             TerminalAutomationScripts.terminalFocus,
@@ -86,6 +112,16 @@ final class TerminalAutomationController: TerminalSessionControlling {
                         result = try self.runAppleScript(
                             TerminalAutomationScripts.iTermSend,
                             arguments: [identifier ?? "", tty ?? "", text ?? ""]
+                        )
+                    } else if action == .submit {
+                        result = try self.runAppleScript(
+                            TerminalAutomationScripts.iTermSubmit,
+                            arguments: [identifier ?? "", tty ?? ""]
+                        )
+                    } else if action == .close {
+                        result = try self.runAppleScript(
+                            TerminalAutomationScripts.iTermClose,
+                            arguments: [identifier ?? "", tty ?? ""]
                         )
                     } else {
                         result = try self.runAppleScript(

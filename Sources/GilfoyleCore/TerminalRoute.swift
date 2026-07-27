@@ -11,15 +11,48 @@ public protocol TerminalSessionControlling {
         to session: AgentSession,
         completion: @escaping (Result<Void, Error>) -> Void
     )
+
+    /// Submits text that is already present in the target agent's composer.
+    /// Concrete terminal adapters can implement this without focusing the tab.
+    func submit(
+        session: AgentSession,
+        completion: @escaping (Result<Void, Error>) -> Void
+    )
+
+    /// Closes only the terminal surface identified by the session's stable
+    /// route. Implementations must never fall back to the selected tab.
+    func close(
+        session: AgentSession,
+        completion: @escaping (Result<Void, Error>) -> Void
+    )
+}
+
+public extension TerminalSessionControlling {
+    func submit(
+        session: AgentSession,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        send(text: "", to: session, completion: completion)
+    }
+
+    func close(
+        session: AgentSession,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        completion(.failure(TerminalRouteError.unsupportedClose))
+    }
 }
 
 public enum TerminalRouteError: LocalizedError, Equatable {
     case missingStableIdentifier
+    case unsupportedClose
 
     public var errorDescription: String? {
         switch self {
         case .missingStableIdentifier:
             return "This terminal session does not expose a stable target identifier."
+        case .unsupportedClose:
+            return "This terminal adapter cannot close the ended session."
         }
     }
 }

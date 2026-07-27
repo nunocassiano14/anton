@@ -89,6 +89,7 @@ private final class FakeTerminalAdapter: TerminalSessionControlling {
 
     private(set) var focused: [TerminalSessionRoute] = []
     private(set) var deliveries: [Delivery] = []
+    private(set) var closed: [TerminalSessionRoute] = []
 
     func focus(
         session: AgentSession,
@@ -114,6 +115,18 @@ private final class FakeTerminalAdapter: TerminalSessionControlling {
                     route: try TerminalRouteResolver.resolve(session.terminal)
                 )
             )
+            completion(.success(()))
+        } catch {
+            completion(.failure(error))
+        }
+    }
+
+    func close(
+        session: AgentSession,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        do {
+            closed.append(try TerminalRouteResolver.resolve(session.terminal))
             completion(.success(()))
         } catch {
             completion(.failure(error))
@@ -878,7 +891,11 @@ runner.run("a reused PID is never force-killed") {
 runner.run("background reply scripts do not request terminal focus") {
     for script in [
         TerminalAutomationScripts.terminalSend,
-        TerminalAutomationScripts.iTermSend
+        TerminalAutomationScripts.iTermSend,
+        TerminalAutomationScripts.terminalSubmit,
+        TerminalAutomationScripts.iTermSubmit,
+        TerminalAutomationScripts.terminalClose,
+        TerminalAutomationScripts.iTermClose
     ] {
         try runner.require(
             !script.contains("activate")
@@ -891,6 +908,22 @@ runner.run("background reply scripts do not request terminal focus") {
         TerminalAutomationScripts.terminalFocus.contains("activate")
             && TerminalAutomationScripts.iTermFocus.contains("activate"),
         "Only the explicit focus scripts may activate terminal applications"
+    )
+    try runner.require(
+        TerminalAutomationScripts.terminalSend.contains("delay 0.35"),
+        "Terminal paste submission must allow the agent TUI to consume the paste"
+    )
+    try runner.require(
+        TerminalAutomationScripts.terminalSubmit.contains("do script \"\"")
+            && TerminalAutomationScripts.iTermSubmit.contains("newline yes"),
+        "Both terminals must expose a background-only submission retry"
+    )
+    try runner.require(
+        TerminalAutomationScripts.terminalClose.contains("tty of terminalTab is targetTTY")
+            && TerminalAutomationScripts.terminalClose.contains("close terminalWindow")
+            && TerminalAutomationScripts.terminalClose.contains("do script \"exit\" in terminalTab")
+            && TerminalAutomationScripts.iTermClose.contains("write terminalSession text \"exit\" newline yes"),
+        "Ended agents must close only their exact Terminal/iTerm session"
     )
 }
 
@@ -1148,6 +1181,18 @@ runner.run("fake terminal adapter sends only to the selected session") {
     try runner.require(
         fake.deliveries.first?.route != otherRoute,
         "Reply leaked to the Terminal session"
+    )
+    fake.submit(session: terminalSession) { _ in }
+    try runner.require(fake.deliveries.count == 2, "Submission retry was not delivered")
+    try runner.require(fake.deliveries.last?.text == "", "Submission retry inserted extra text")
+    try runner.require(
+        fake.deliveries.last?.route == otherRoute,
+        "Submission retry targeted the wrong session"
+    )
+    fake.close(session: terminalSession) { _ in }
+    try runner.require(
+        fake.closed == [.terminal(tty: "/dev/ttys001")],
+        "Session closure targeted the wrong terminal"
     )
 }
 

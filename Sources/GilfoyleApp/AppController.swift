@@ -110,15 +110,19 @@ final class AppController: ObservableObject {
         panelController = NotchPanelController(controller: self)
         panelController?.showCompact()
         let existingProcesses = agentProcessDiscovery.discoverNow()
-        _ = sessionStore.discover(existingProcesses)
+        let initialDiscovery = sessionStore.discover(existingProcesses)
+        watchDiscoveredProcesses(existingProcesses)
+        closeExitedTerminalSessions(initialDiscovery.exitedSessions)
         agentProcessDiscovery.start { [weak self] sessions in
             DispatchQueue.main.async {
                 guard let self else { return }
-                let completed = self.sessionStore.discover(sessions)
+                let discovery = self.sessionStore.discover(sessions)
+                self.watchDiscoveredProcesses(sessions)
+                self.closeExitedTerminalSessions(discovery.exitedSessions)
                 // A local Codex rollout can finish without emitting a Stop
                 // hook. The process scan is the fallback that still turns
                 // that completion into the visible Anton callout.
-                for sessionID in completed {
+                for sessionID in discovery.completedSessionIDs {
                     self.showCompletionCallout(sessionID: sessionID)
                 }
             }
@@ -279,13 +283,6 @@ final class AppController: ObservableObject {
                 self.endingSessionIDs.remove(sessionID)
                 switch result {
                 case .success:
-                    self.processMonitor.stopWatching(sessionID: sessionID)
-                    self.queuedReplies.removeValue(forKey: sessionID)
-                    self.pendingCallouts.remove(sessionID: sessionID)
-                    self.pendingCalloutCount = self.pendingCallouts.count
-                    if self.calloutSessionID == sessionID {
-                        self.dismissCallout()
-                    }
                     self.agentProcessExited(
                         sessionID: sessionID,
                         reason: "Session ended by you"
@@ -325,8 +322,23 @@ final class AppController: ObservableObject {
         terminalAutomation.send(text: trimmed, to: session) { [weak self] result in
             switch result {
             case .success:
-                self?.sessionStore.markWorking(sessionID: sessionID)
-                self?.collapsePanel()
+                guard let self else {
+                    completion(false)
+                    return
+                }
+                let activity = "Submitting prompt"
+                let needsAcknowledgement = self.sessionStore.markWorking(
+                    sessionID: sessionID,
+                    activity: activity
+                )
+                self.collapsePanel()
+                if needsAcknowledgement {
+                    self.ensurePromptStarted(
+                        sessionID: sessionID,
+                        session: session,
+                        expectedActivity: activity
+                    )
+                }
                 completion(true)
             case .failure(let error):
                 self?.showMessage(error.localizedDescription)
@@ -484,13 +496,17 @@ final class AppController: ObservableObject {
             name: metadata.name,
             model: metadata.model
         )
-        if reduction.session.state == .disconnected {
-            processMonitor.stopWatching(sessionID: reduction.session.id)
-        } else {
+        if reduction.session.terminal.processID != nil {
             processMonitor.watch(
                 sessionID: reduction.session.id,
                 processID: reduction.session.terminal.processID
             ) { [weak self] in
+                self?.agentProcessExited(sessionID: reduction.session.id)
+            }
+        } else if reduction.session.state == .disconnected {
+            // A lifecycle hook without a recoverable PID cannot be observed
+            // further. The stable terminal route still lets us clean it up.
+            DispatchQueue.main.async { [weak self] in
                 self?.agentProcessExited(sessionID: reduction.session.id)
             }
         }
@@ -520,13 +536,71 @@ final class AppController: ObservableObject {
         terminalAutomation.send(text: reply, to: session) { [weak self] result in
             switch result {
             case .success:
-                self?.sessionStore.markWorking(
+                guard let self else { return }
+                let activity = "Submitting queued message"
+                let needsAcknowledgement = self.sessionStore.markWorking(
                     sessionID: session.id,
-                    activity: "Queued message sent"
+                    activity: activity
                 )
+                if needsAcknowledgement {
+                    self.ensurePromptStarted(
+                        sessionID: session.id,
+                        session: session,
+                        expectedActivity: activity
+                    )
+                }
             case .failure(let error):
                 self?.queuedReplies[session.id, default: []].insert(reply, at: 0)
                 self?.showMessage(error.localizedDescription)
+            }
+        }
+    }
+
+    /// Terminal.app can occasionally finish the paste without submitting the
+    /// TUI composer. If neither the official hook nor local process discovery
+    /// observes the new turn, send one background-only Return and verify once
+    /// more. The exact TTY/session route is preserved throughout.
+    private func ensurePromptStarted(
+        sessionID: String,
+        session: AgentSession,
+        expectedActivity: String
+    ) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self,
+                  let current = self.sessionStore.session(id: sessionID),
+                  current.state == .working,
+                  current.currentActivity == expectedActivity
+            else {
+                return
+            }
+            self.terminalAutomation.submit(session: session) { [weak self] result in
+                guard let self else { return }
+                if case .failure(let error) = result {
+                    self.sessionStore.markPromptSubmissionUnconfirmed(
+                        sessionID: sessionID,
+                        expectedActivity: expectedActivity
+                    )
+                    self.showUrgentCallout(sessionID: sessionID)
+                    self.showMessage(error.localizedDescription)
+                    return
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
+                    guard let self,
+                          let current = self.sessionStore.session(id: sessionID),
+                          current.state == .working,
+                          current.currentActivity == expectedActivity
+                    else {
+                        return
+                    }
+                    self.sessionStore.markPromptSubmissionUnconfirmed(
+                        sessionID: sessionID,
+                        expectedActivity: expectedActivity
+                    )
+                    self.showUrgentCallout(sessionID: sessionID)
+                    self.showMessage(
+                        "The prompt was inserted, but the agent did not acknowledge submission."
+                    )
+                }
             }
         }
     }
@@ -547,23 +621,66 @@ final class AppController: ObservableObject {
         sessionID: String,
         reason: String = "Agent process exited"
     ) {
-        if sessionStore.session(id: sessionID)?.state == .disconnected,
-           sessionStore.session(id: sessionID)?.currentActivity == "Session ended by you"
-        {
-            return
-        }
-        if let interactionID = sessionStore.session(id: sessionID)?.interaction?.id {
+        guard let session = sessionStore.session(id: sessionID) else { return }
+        if let interactionID = session.interaction?.id {
             _ = responseBroker.resolve(
                 requestID: interactionID,
                 response: BridgeResponse(
                     requestID: interactionID,
                     decision: .cancel,
-                    message: "The agent process exited."
+                    message: reason + "."
                 )
             )
         }
+        processMonitor.stopWatching(sessionID: sessionID)
         queuedReplies.removeValue(forKey: sessionID)
-        sessionStore.markDisconnected(sessionID: sessionID, reason: reason)
+        pendingCallouts.remove(sessionID: sessionID)
+        pendingCalloutCount = pendingCallouts.count
+        let wasCurrentCallout = calloutSessionID == sessionID
+        sessionStore.dismiss(sessionID: sessionID)
+        if wasCurrentCallout {
+            dismissCallout()
+        }
+        closeTerminal(for: session)
+    }
+
+    private func watchDiscoveredProcesses(_ processes: [DiscoveredAgentSession]) {
+        let liveProcessIDs = Set(processes.map(\.processID))
+        for session in sessionStore.sessions {
+            guard
+                let processID = session.terminal.processID,
+                liveProcessIDs.contains(processID)
+            else {
+                continue
+            }
+            processMonitor.watch(sessionID: session.id, processID: processID) { [weak self] in
+                self?.agentProcessExited(sessionID: session.id)
+            }
+        }
+    }
+
+    private func closeExitedTerminalSessions(_ sessions: [AgentSession]) {
+        for session in sessions {
+            processMonitor.stopWatching(sessionID: session.id)
+            closeTerminal(for: session)
+        }
+    }
+
+    private func closeTerminal(for session: AgentSession) {
+        terminalAutomation.close(session: session) { [weak self] result in
+            guard case .failure(let error) = result else { return }
+            if let automationError = error as? TerminalAutomationError,
+               case .targetNotFound = automationError
+            {
+                // The user may already have closed the exact tab. The desired
+                // end state has been reached, so this is not actionable.
+                return
+            }
+            self?.showMessage(
+                "The session ended, but Anton could not close its terminal tab: "
+                    + error.localizedDescription
+            )
+        }
     }
 
     private func showMessage(_ message: String) {

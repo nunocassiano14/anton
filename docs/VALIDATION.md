@@ -34,6 +34,7 @@ Current coverage:
 - Authenticated Unix-socket round trip and `0600` permissions
 - Invalid-token rejection before the application handler
 - Duplicate startup rejection without unlinking the supervised IPC socket
+- Background prompt submission retry without terminal focus or extra text
 
 The same core behavior is represented in Swift Testing files under `Tests/GilfoyleCoreTests`.
 
@@ -67,6 +68,8 @@ These checks require the built app, macOS permission dialogs, and interactive lo
 - [ ] Allow and deny one real approval
 - [ ] Answer one real structured question
 - [ ] Dictate into the native reply field with Wispr Flow
+- [ ] Exit one real agent and confirm Anton removes its row and closes only
+  that Terminal/iTerm tab
 - [x] Enable and verify the per-user launchd supervisor
 - [x] Observe that no TCP listener or runtime network request is created
 - [ ] Remove both integrations and compare preserved configuration

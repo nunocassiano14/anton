@@ -79,9 +79,13 @@ codex
 
 Click the compact notch surface or press `⌥⌘G` to open the board. Each flat session row identifies the agent, project, model, terminal, state, activity, start time, and last action when the hook exposes that information.
 
-When a main turn finishes, Anton expands into a focused visual callout. Type or dictate in that session's native editor and press Enter. You can also paste an image or attach a local file. Anton resolves the stored Terminal TTY or iTerm unique session ID before sending, so it never targets whichever terminal happens to be focused. If another agent finishes while a callout is visible, Anton queues it; urgent approvals and questions move ahead of normal completions.
+When a main turn finishes, Anton expands into a focused visual callout. Type or dictate in that session's native editor and press Enter. You can also paste an image or attach a local file. Anton resolves the stored Terminal TTY or iTerm unique session ID before sending, so it never targets whichever terminal happens to be focused. It waits for the agent's lifecycle acknowledgement and retries a background-only Return if Terminal pasted the prompt without submitting it. If another agent finishes while a callout is visible, Anton queues it; urgent approvals and questions move ahead of normal completions.
 
 Approval and question hooks remain blocked while the card awaits a response. Anton sends only the explicit Allow, Deny, Cancel, or answer selected by the user; it does not weaken Claude Code or Codex sandbox policy.
+
+When an agent process ends, Anton cancels any pending interaction, removes the
+session from the board, and closes only its stored Terminal/iTerm surface.
+It never substitutes the currently selected tab.
 
 ## Tests
 

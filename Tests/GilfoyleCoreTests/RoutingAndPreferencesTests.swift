@@ -33,7 +33,11 @@ struct RoutingAndPreferencesTests {
     func backgroundRepliesDoNotRequestTerminalFocus() {
         for script in [
             TerminalAutomationScripts.terminalSend,
-            TerminalAutomationScripts.iTermSend
+            TerminalAutomationScripts.iTermSend,
+            TerminalAutomationScripts.terminalSubmit,
+            TerminalAutomationScripts.iTermSubmit,
+            TerminalAutomationScripts.terminalClose,
+            TerminalAutomationScripts.iTermClose
         ] {
             #expect(!script.contains("activate"))
             #expect(!script.contains("set selected"))
@@ -41,6 +45,13 @@ struct RoutingAndPreferencesTests {
         }
         #expect(TerminalAutomationScripts.terminalFocus.contains("activate"))
         #expect(TerminalAutomationScripts.iTermFocus.contains("activate"))
+        #expect(TerminalAutomationScripts.terminalSend.contains("delay 0.35"))
+        #expect(TerminalAutomationScripts.terminalSubmit.contains("do script \"\""))
+        #expect(TerminalAutomationScripts.iTermSubmit.contains("newline yes"))
+        #expect(TerminalAutomationScripts.terminalClose.contains("tty of terminalTab is targetTTY"))
+        #expect(TerminalAutomationScripts.terminalClose.contains("close terminalWindow"))
+        #expect(TerminalAutomationScripts.terminalClose.contains("do script \"exit\" in terminalTab"))
+        #expect(TerminalAutomationScripts.iTermClose.contains("write terminalSession text \"exit\" newline yes"))
     }
 
     @Test("Attention cards open automatically but remain user-collapsible")
@@ -292,6 +303,14 @@ struct RoutingAndPreferencesTests {
         )
         let otherRoute = try TerminalRouteResolver.resolve(terminalSession.terminal)
         #expect(fake.deliveries.first?.route != otherRoute)
+
+        fake.submit(session: terminalSession) { _ in }
+        #expect(fake.deliveries.count == 2)
+        #expect(fake.deliveries.last?.text == "")
+        #expect(fake.deliveries.last?.route == otherRoute)
+
+        fake.close(session: iTermSession) { _ in }
+        #expect(fake.closed == [.iTerm(uniqueID: "TARGET", tty: "/dev/ttys002")])
     }
 }
 
@@ -303,6 +322,7 @@ private final class FakeTerminalAdapter: TerminalSessionControlling {
 
     private(set) var focused: [TerminalSessionRoute] = []
     private(set) var deliveries: [Delivery] = []
+    private(set) var closed: [TerminalSessionRoute] = []
 
     func focus(
         session: AgentSession,
@@ -328,6 +348,18 @@ private final class FakeTerminalAdapter: TerminalSessionControlling {
                     route: try TerminalRouteResolver.resolve(session.terminal)
                 )
             )
+            completion(.success(()))
+        } catch {
+            completion(.failure(error))
+        }
+    }
+
+    func close(
+        session: AgentSession,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        do {
+            closed.append(try TerminalRouteResolver.resolve(session.terminal))
             completion(.success(()))
         } catch {
             completion(.failure(error))

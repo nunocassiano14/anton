@@ -123,9 +123,22 @@ Consequences:
 - A response cannot fall through to the most recently focused terminal.
 - A stale or duplicate click is rejected.
 - Closing Anton cancels all waiting hooks.
-- If the observed agent process exits, its pending interaction is cancelled and the session becomes disconnected.
+- If the observed agent process exits, its pending interaction is cancelled,
+  its row is removed, and only its exact terminal route is closed.
 
 Normal prompt replies use the stored terminal route and Apple Events. They do not use the hook response broker because they behave like explicit keyboard input in the original session.
+
+Delivery success and agent acknowledgement are separate states. A late
+AppleScript callback never replaces a more authoritative hook/tool activity.
+If Terminal finishes a paste without starting the turn, Anton sends one
+background-only Return to the same TTY and surfaces an error if neither hooks
+nor local discovery observe the new turn.
+
+`SessionEnd`, `DispatchSourceProcess`, and the five-second discovery fallback
+converge on the same cleanup path. Terminal closure is identity-bound: a
+single-tab Terminal window can be closed directly; a tab among neighbours
+receives `exit` on its exact TTY; iTerm receives `exit` on its exact unique
+session ID/TTY. No path falls back to the selected or frontmost tab.
 
 ## Local IPC
 
