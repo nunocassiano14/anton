@@ -1317,7 +1317,50 @@ runner.run("local Claude history exposes resumable sessions without a terminal")
     let sessions = ResumableSessionParser.claudeHistory(data)
     try runner.require(sessions.count == 1, "Claude history was not deduplicated")
     try runner.require(sessions[0].title == "Latest turn", "Latest Claude title was not selected")
+    try runner.require(
+        sessions[0].displayTitle == "Claude Code · anton",
+        "Prompt text leaked into the visible Claude title"
+    )
     try runner.require(sessions[0].cwd == "/tmp/anton", "Claude workspace was lost")
+}
+
+runner.run("resume titles prefer explicit rename, then branch, never prompt text") {
+    let renamed = ResumableAgentSession(
+        agent: .codex,
+        sessionID: "renamed",
+        title: "Do not show this first prompt",
+        explicitName: "Anton",
+        cwd: "/tmp/anton",
+        updatedAt: Date(),
+        gitBranch: "feature/resume"
+    )
+    let branched = ResumableAgentSession(
+        agent: .claude,
+        sessionID: "branched",
+        title: "/resume old-session",
+        cwd: "/tmp/anton",
+        updatedAt: Date(),
+        gitBranch: "feature/resume"
+    )
+    try runner.require(renamed.displayTitle == "Anton", "Explicit rename did not win")
+    try runner.require(
+        branched.displayTitle == "feature/resume",
+        "Git branch was not used for an unnamed session"
+    )
+}
+
+runner.run("Claude custom-title metadata is extracted locally") {
+    let data = """
+    {"type":"user","sessionId":"claude-local","gitBranch":"feature/old"}
+    {"type":"custom-title","sessionId":"claude-local","customTitle":"Baltic design"}
+    {"type":"assistant","sessionId":"claude-local","gitBranch":"feature/current"}
+    """.data(using: .utf8) ?? Data()
+    let metadata = ResumableSessionParser.claudeTranscriptMetadata(data)
+    try runner.require(metadata.explicitName == "Baltic design", "Claude /rename was missed")
+    try runner.require(
+        metadata.gitBranch == "feature/current",
+        "Latest Claude branch was missed"
+    )
 }
 
 runner.run("new session command is quoted and carries only the launch token") {

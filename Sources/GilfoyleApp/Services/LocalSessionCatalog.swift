@@ -14,17 +14,26 @@ final class LocalSessionCatalog: @unchecked Sendable {
     }
 
     func load(limit: Int = 300) -> [ResumableAgentSession] {
-        let claude = ResumableSessionParser.claudeHistory(
+        let claudeHistory = ResumableSessionParser.claudeHistory(
             boundedTail(
                 home.appendingPathComponent(".claude/history.jsonl"),
                 maximumBytes: 4_194_304
             )
         )
-        let codex = codexThreads()
-        let fallback = codex.isEmpty ? codexIndex() : []
+        let claude = enrichClaudeSessions(
+            Array(claudeHistory.prefix(limit))
+        )
+        let codexDatabase = codexThreads()
+        let codexIndex = codexIndex()
+        let codex = codexDatabase.isEmpty
+            ? codexIndex
+            : ResumableSessionParser.mergingMetadata(
+                into: codexDatabase,
+                from: codexIndex
+            )
         return Array(
             ResumableSessionParser
-                .deduplicated(claude + codex + fallback)
+                .deduplicated(claude + codex)
                 .prefix(limit)
         )
     }
@@ -42,7 +51,8 @@ final class LocalSessionCatalog: @unchecked Sendable {
             select
               id,
               cwd,
-              coalesce(nullif(name, ''), nullif(title, ''), nullif(agent_nickname, ''), '') as title,
+              coalesce(nullif(title, ''), '') as title,
+              coalesce(nullif(name, ''), '') as explicit_name,
               coalesce(updated_at_ms, updated_at * 1000, created_at_ms, created_at * 1000, 0) as updated_at_ms,
               coalesce(model, '') as model,
               coalesce(preview, '') as preview,
@@ -74,6 +84,104 @@ final class LocalSessionCatalog: @unchecked Sendable {
                 maximumBytes: 2_097_152
             )
         )
+    }
+
+    private func enrichClaudeSessions(
+        _ sessions: [ResumableAgentSession]
+    ) -> [ResumableAgentSession] {
+        let transcriptURLs = Dictionary(
+            uniqueKeysWithValues: sessions.compactMap { session in
+                claudeTranscriptURL(for: session).map { (session.sessionID, $0) }
+            }
+        )
+        let customTitles = claudeCustomTitles(
+            in: Array(transcriptURLs.values)
+        )
+        let liveNames = claudeLiveNames()
+
+        return sessions.map { session in
+            let transcript = transcriptURLs[session.sessionID].map {
+                boundedTail($0, maximumBytes: 262_144)
+            } ?? Data()
+            let transcriptMetadata = ResumableSessionParser
+                .claudeTranscriptMetadata(transcript)
+            return session.enriching(
+                explicitName: customTitles[session.sessionID]
+                    ?? transcriptMetadata.explicitName
+                    ?? liveNames[session.sessionID],
+                gitBranch: transcriptMetadata.gitBranch
+            )
+        }
+    }
+
+    private func claudeTranscriptURL(
+        for session: ResumableAgentSession
+    ) -> URL? {
+        guard !session.cwd.isEmpty else { return nil }
+        let projectFolder = session.cwd.replacingOccurrences(of: "/", with: "-")
+        let url = home
+            .appendingPathComponent(".claude/projects", isDirectory: true)
+            .appendingPathComponent(projectFolder, isDirectory: true)
+            .appendingPathComponent("\(session.sessionID).jsonl")
+        return fileManager.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// Claude does not maintain a global title index. Scan only the known
+    /// transcript files and return their tiny `custom-title` records.
+    private func claudeCustomTitles(in transcriptURLs: [URL]) -> [String: String] {
+        guard !transcriptURLs.isEmpty else { return [:] }
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/grep")
+        process.arguments = [
+            "-h",
+            #""type":"custom-title""#,
+            "--"
+        ] + transcriptURLs.map(\.path)
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            return ResumableSessionParser.claudeCustomTitles(data)
+        } catch {
+            return [:]
+        }
+    }
+
+    private func claudeLiveNames() -> [String: String] {
+        struct LiveSession: Decodable {
+            let sessionId: String?
+            let name: String?
+        }
+
+        let directory = home.appendingPathComponent(".claude/sessions")
+        guard let files = try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        ) else {
+            return [:]
+        }
+        var names: [String: String] = [:]
+        for file in files where file.pathExtension == "json" {
+            guard
+                let data = try? Data(contentsOf: file),
+                let live = try? JSONDecoder().decode(LiveSession.self, from: data),
+                let sessionID = normalized(live.sessionId),
+                let name = normalized(live.name)
+            else {
+                continue
+            }
+            names[sessionID] = name
+        }
+        return names
+    }
+
+    private func normalized(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private func boundedTail(_ url: URL, maximumBytes: UInt64) -> Data {

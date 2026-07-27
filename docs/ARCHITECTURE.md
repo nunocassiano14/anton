@@ -108,15 +108,17 @@ The launcher can enumerate local session metadata without starting a shell:
 
 - Claude Code: a bounded tail of `~/.claude/history.jsonl`
 - Codex: read-only queries against `~/.codex/state_5.sqlite`, with
-  `~/.codex/session_index.jsonl` as a compatibility fallback
+  `~/.codex/session_index.jsonl` supplying explicit `/rename` names and acting
+  as a compatibility fallback
 
 Malformed rows are ignored, archived Codex threads are excluded, duplicates
 are reduced to their newest timestamp, and the in-memory catalog is capped.
-The UI initially shows titles, agent, workspace, and age. Claude's own history
-index derives unnamed titles from prompt text, matching its native Resume
-picker; Anton says so in the launcher. Longer prompt/response previews stay
-hidden until the user explicitly enables them. Anton does not create a
-session-history database.
+For Claude, Anton reads `custom-title` records only from transcripts already
+identified by that bounded history index. The UI title prefers the user's
+explicit `/rename` or `--name`, then the historical Git branch, and finally an
+honest workspace label. Prompt text is never used as the visible title. Longer
+prompt/response previews stay hidden until the user explicitly enables them.
+Anton does not create a session-history database.
 
 Starting or resuming is a separate, explicit mutation. `AgentLaunchCommandBuilder`
 constructs a POSIX-quoted command for the chosen working directory and the

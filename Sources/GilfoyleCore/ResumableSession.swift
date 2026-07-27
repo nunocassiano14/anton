@@ -10,6 +10,10 @@ public struct ResumableAgentSession: Identifiable, Equatable, Sendable {
     public var id: String { "\(agent.rawValue):\(sessionID)" }
     public let agent: AgentKind
     public let sessionID: String
+    /// A name explicitly assigned by the user through `/rename` or `--name`.
+    public let explicitName: String?
+    /// Agent-owned fallback text. This can originate from a first prompt and
+    /// must not be used as the visible session name.
     public let title: String
     public let cwd: String
     public let updatedAt: Date
@@ -23,6 +27,7 @@ public struct ResumableAgentSession: Identifiable, Equatable, Sendable {
         agent: AgentKind,
         sessionID: String,
         title: String,
+        explicitName: String? = nil,
         cwd: String,
         updatedAt: Date,
         model: String? = nil,
@@ -33,6 +38,7 @@ public struct ResumableAgentSession: Identifiable, Equatable, Sendable {
     ) {
         self.agent = agent
         self.sessionID = sessionID
+        self.explicitName = Self.normalized(explicitName)
         self.title = title
         self.cwd = cwd
         self.updatedAt = updatedAt
@@ -41,6 +47,64 @@ public struct ResumableAgentSession: Identifiable, Equatable, Sendable {
         self.gitBranch = gitBranch
         self.isArchived = isArchived
         self.isRunning = isRunning
+    }
+
+    /// The Resume browser deliberately never promotes prompt text to a title.
+    /// A user-supplied name wins, then the historical Git branch, followed by
+    /// an honest workspace label when neither piece of metadata exists.
+    public var displayTitle: String {
+        if let explicitName {
+            return explicitName
+        }
+        if let gitBranch = Self.normalizedBranch(gitBranch) {
+            return gitBranch
+        }
+        let workspace = URL(fileURLWithPath: cwd).lastPathComponent
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !workspace.isEmpty && workspace != "/" {
+            return "\(agent.displayName) · \(workspace)"
+        }
+        return "\(agent.displayName) session"
+    }
+
+    public func enriching(
+        explicitName: String? = nil,
+        gitBranch: String? = nil
+    ) -> ResumableAgentSession {
+        ResumableAgentSession(
+            agent: agent,
+            sessionID: sessionID,
+            title: title,
+            explicitName: explicitName ?? self.explicitName,
+            cwd: cwd,
+            updatedAt: updatedAt,
+            model: model,
+            preview: preview,
+            gitBranch: Self.normalizedBranch(gitBranch) ?? self.gitBranch,
+            isArchived: isArchived,
+            isRunning: isRunning
+        )
+    }
+
+    private static func normalized(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : String(trimmed.prefix(96))
+    }
+
+    private static func normalizedBranch(_ value: String?) -> String? {
+        guard let branch = normalized(value), branch != "HEAD" else { return nil }
+        return branch
+    }
+}
+
+public struct ResumableSessionMetadata: Equatable, Sendable {
+    public let explicitName: String?
+    public let gitBranch: String?
+
+    public init(explicitName: String? = nil, gitBranch: String? = nil) {
+        self.explicitName = explicitName
+        self.gitBranch = gitBranch
     }
 }
 
@@ -157,10 +221,18 @@ public enum ResumableSessionParser {
         let sessionId: String?
     }
 
+    private struct ClaudeTranscriptRow: Decodable {
+        let type: String?
+        let sessionId: String?
+        let customTitle: String?
+        let gitBranch: String?
+    }
+
     private struct CodexThreadRow: Decodable {
         let id: String?
         let cwd: String?
         let title: String?
+        let explicitName: String?
         let updatedAtMS: Double?
         let model: String?
         let preview: String?
@@ -171,6 +243,7 @@ public enum ResumableSessionParser {
             case id
             case cwd
             case title
+            case explicitName = "explicit_name"
             case updatedAtMS = "updated_at_ms"
             case model
             case preview
@@ -239,11 +312,12 @@ public enum ResumableSessionParser {
                 title: boundedTitle(normalized(row.title))
                     ?? boundedTitle(preview)
                     ?? "Codex session",
+                explicitName: boundedTitle(normalized(row.explicitName)),
                 cwd: cwd,
                 updatedAt: Date(timeIntervalSince1970: updatedAtMS / 1_000),
                 model: normalized(row.model),
                 preview: boundedPreview(preview),
-                gitBranch: normalized(row.gitBranch),
+                gitBranch: normalizedBranch(row.gitBranch),
                 isArchived: row.archived == 1
             )
         }
@@ -266,12 +340,79 @@ public enum ResumableSessionParser {
             return ResumableAgentSession(
                 agent: .codex,
                 sessionID: sessionID,
-                title: boundedTitle(normalized(row.threadName)) ?? "Codex session",
+                title: "Codex session",
+                explicitName: boundedTitle(normalized(row.threadName)),
                 cwd: "",
                 updatedAt: date
             )
         }
         .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    public static func claudeTranscriptMetadata(
+        _ data: Data
+    ) -> ResumableSessionMetadata {
+        var explicitName: String?
+        var gitBranch: String?
+        for line in lines(in: data) {
+            guard let row = try? JSONDecoder().decode(
+                ClaudeTranscriptRow.self,
+                from: line
+            ) else {
+                continue
+            }
+            if row.type == "custom-title",
+               let customTitle = boundedTitle(normalized(row.customTitle))
+            {
+                explicitName = customTitle
+            }
+            if let branch = normalizedBranch(row.gitBranch) {
+                gitBranch = branch
+            }
+        }
+        return ResumableSessionMetadata(
+            explicitName: explicitName,
+            gitBranch: gitBranch
+        )
+    }
+
+    public static func claudeCustomTitles(_ data: Data) -> [String: String] {
+        var titles: [String: String] = [:]
+        for line in lines(in: data) {
+            guard
+                let row = try? JSONDecoder().decode(ClaudeTranscriptRow.self, from: line),
+                row.type == "custom-title",
+                let sessionID = normalized(row.sessionId),
+                let title = boundedTitle(normalized(row.customTitle))
+            else {
+                continue
+            }
+            titles[sessionID] = title
+        }
+        return titles
+    }
+
+    public static func mergingMetadata(
+        into primary: [ResumableAgentSession],
+        from metadata: [ResumableAgentSession]
+    ) -> [ResumableAgentSession] {
+        let metadataByID = Dictionary(
+            metadata.map { ($0.id, $0) },
+            uniquingKeysWith: { current, candidate in
+                candidate.updatedAt > current.updatedAt ? candidate : current
+            }
+        )
+        let primaryIDs = Set(primary.map(\.id))
+        let enriched = primary.map { session in
+            guard let overlay = metadataByID[session.id] else { return session }
+            return session.enriching(
+                explicitName: overlay.explicitName,
+                gitBranch: overlay.gitBranch
+            )
+        }
+        return deduplicated(
+            enriched + metadata.filter { !primaryIDs.contains($0.id) }
+        )
     }
 
     public static func deduplicated(
@@ -300,7 +441,9 @@ public enum ResumableSessionParser {
             guard matchesWorkspace else { return false }
             guard !needle.isEmpty else { return true }
             return [
-                session.title,
+                session.displayTitle,
+                session.explicitName ?? "",
+                session.preview ?? "",
                 session.cwd,
                 session.model ?? "",
                 session.gitBranch ?? "",
@@ -322,6 +465,11 @@ public enum ResumableSessionParser {
         return trimmed.isEmpty ? nil : trimmed
     }
 
+    private static func normalizedBranch(_ value: String?) -> String? {
+        guard let branch = normalized(value), branch != "HEAD" else { return nil }
+        return branch
+    }
+
     private static func boundedTitle(_ value: String?) -> String? {
         guard let value = normalized(value) else { return nil }
         let oneLine = value
@@ -340,4 +488,3 @@ public enum ResumableSessionParser {
         return String(value.prefix(220))
     }
 }
-

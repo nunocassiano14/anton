@@ -19,6 +19,7 @@ struct ResumableSessionTests {
 
         #expect(sessions.map(\.sessionID) == ["claude-1", "claude-2"])
         #expect(sessions[0].title == "Latest prompt")
+        #expect(sessions[0].displayTitle == "Claude Code · alpha")
         #expect(sessions[0].preview == "Latest prompt\nwith detail")
         #expect(sessions[0].cwd == "/tmp/alpha")
         #expect(sessions[0].updatedAt == Date(timeIntervalSince1970: 3))
@@ -32,7 +33,8 @@ struct ResumableSessionTests {
               {
                 "id":"codex-1",
                 "cwd":"/tmp/repo",
-                "title":"Review the launcher",
+                "title":"Prompt-derived fallback",
+                "explicit_name":"Launcher review",
                 "updated_at_ms":5000,
                 "model":"gpt-5.6-terra",
                 "preview":"Inspect the current implementation",
@@ -59,6 +61,90 @@ struct ResumableSessionTests {
         #expect(session.id == "codex:codex-1")
         #expect(session.model == "gpt-5.6-terra")
         #expect(session.gitBranch == "feature/launcher")
+        #expect(session.explicitName == "Launcher review")
+        #expect(session.displayTitle == "Launcher review")
+    }
+
+    @Test("Visible title uses rename, then branch, and never prompt text")
+    func visibleTitlePriority() {
+        let renamed = fixture(
+            agent: .codex,
+            id: "renamed",
+            title: "Long first prompt that must stay private",
+            explicitName: "Anton",
+            cwd: "/work/anton",
+            gitBranch: "feature/catalog"
+        )
+        let branched = fixture(
+            agent: .claude,
+            id: "branched",
+            title: "/resume old-session",
+            cwd: "/work/anton",
+            gitBranch: "feature/catalog"
+        )
+        let unnamed = fixture(
+            agent: .claude,
+            id: "unnamed",
+            title: "Another prompt",
+            cwd: "/work/anton"
+        )
+
+        #expect(renamed.displayTitle == "Anton")
+        #expect(branched.displayTitle == "feature/catalog")
+        #expect(unnamed.displayTitle == "Claude Code · anton")
+    }
+
+    @Test("Claude transcript extracts explicit rename and historical branch")
+    func parsesClaudeTranscriptMetadata() throws {
+        let data = try #require(
+            """
+            {"type":"user","sessionId":"claude-1","gitBranch":"feature/old"}
+            {"type":"custom-title","sessionId":"claude-1","customTitle":"Baltic design"}
+            {"type":"assistant","sessionId":"claude-1","gitBranch":"feature/current"}
+            {"type":"custom-title","sessionId":"claude-1","customTitle":"Baltic final"}
+            """.data(using: .utf8)
+        )
+
+        let metadata = ResumableSessionParser.claudeTranscriptMetadata(data)
+        let titles = ResumableSessionParser.claudeCustomTitles(data)
+
+        #expect(metadata.explicitName == "Baltic final")
+        #expect(metadata.gitBranch == "feature/current")
+        #expect(titles == ["claude-1": "Baltic final"])
+    }
+
+    @Test("Codex session index overlays rename without losing database metadata")
+    func mergesCodexRenameIndex() throws {
+        let database = try #require(
+            """
+            [{
+              "id":"codex-1",
+              "cwd":"/tmp/repo",
+              "title":"First prompt",
+              "updated_at_ms":5000,
+              "model":"gpt-5.6-terra",
+              "git_branch":"feature/launcher",
+              "archived":0
+            }]
+            """.data(using: .utf8)
+        )
+        let index = try #require(
+            """
+            {"id":"codex-1","thread_name":"Character design specs","updated_at":"1970-01-01T00:00:03.000Z"}
+            """.data(using: .utf8)
+        )
+
+        let sessions = ResumableSessionParser.mergingMetadata(
+            into: ResumableSessionParser.codexThreads(database),
+            from: ResumableSessionParser.codexIndex(index)
+        )
+        let session = try #require(sessions.first)
+
+        #expect(session.displayTitle == "Character design specs")
+        #expect(session.cwd == "/tmp/repo")
+        #expect(session.model == "gpt-5.6-terra")
+        #expect(session.gitBranch == "feature/launcher")
+        #expect(session.updatedAt == Date(timeIntervalSince1970: 5))
     }
 
     @Test("Search and workspace filters are deterministic")
@@ -160,16 +246,20 @@ struct ResumableSessionTests {
         agent: AgentKind,
         id: String,
         title: String,
+        explicitName: String? = nil,
         cwd: String,
-        model: String? = nil
+        model: String? = nil,
+        gitBranch: String? = nil
     ) -> ResumableAgentSession {
         ResumableAgentSession(
             agent: agent,
             sessionID: id,
             title: title,
+            explicitName: explicitName,
             cwd: cwd,
             updatedAt: Date(),
-            model: model
+            model: model,
+            gitBranch: gitBranch
         )
     }
 

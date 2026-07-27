@@ -385,7 +385,7 @@ struct SessionLauncherView: View {
             .frame(width: 24, height: 24)
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 7) {
-                    Text(session.title)
+                    Text(session.displayTitle)
                         .font(.system(size: 12.5, weight: .semibold))
                         .lineLimit(1)
                     if session.isRunning {
@@ -436,7 +436,7 @@ struct SessionLauncherView: View {
                     AgentPixelGlyph(agent: selectedSession.agent, state: .idle)
                         .frame(width: 27, height: 27)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(selectedSession.title)
+                        Text(selectedSession.displayTitle)
                             .font(.system(size: 13.5, weight: .semibold))
                             .lineLimit(2)
                         Text(selectedSession.sessionID)
@@ -533,7 +533,7 @@ struct SessionLauncherView: View {
         HStack(spacing: 7) {
             Image(systemName: "lock.fill")
                 .font(.system(size: 8))
-            Text("Local only · Claude titles may use prompt text")
+            Text("Local only · /rename name, otherwise Git branch")
             Spacer()
             Text("⌘↩ start")
             Text("·")
