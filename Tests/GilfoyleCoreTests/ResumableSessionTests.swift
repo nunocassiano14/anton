@@ -205,6 +205,29 @@ struct ResumableSessionTests {
         #expect(!command.contains("\n"))
     }
 
+    @Test("A selected Git branch is safely switched before the agent starts")
+    func switchesSelectedBranchBeforeLaunch() throws {
+        let plan = AgentSessionLaunchPlan(
+            launchToken: "token-branch",
+            agent: .codex,
+            mode: .new,
+            executablePath: "/opt/bin/codex",
+            cwd: "/tmp/repo",
+            gitBranch: "feature/Nuno's-launcher",
+            terminalKind: .terminal
+        )
+
+        let command = try AgentLaunchCommandBuilder.command(for: plan)
+
+        #expect(
+            command.hasPrefix(
+                "cd -- '/tmp/repo' && /usr/bin/git switch -- "
+                    + "'feature/Nuno'\\''s-launcher' && exec "
+            )
+        )
+        #expect(command.hasSuffix("'/opt/bin/codex'"))
+    }
+
     @Test("Claude and Codex resume/fork use their native CLI contracts")
     func buildsResumeAndForkCommands() throws {
         let claudeResume = try AgentLaunchCommandBuilder.command(

@@ -79,6 +79,11 @@ final class AppController: ObservableObject {
         label: "com.augustalabs.anton.session-catalog",
         qos: .userInitiated
     )
+    private let gitBranchCatalog = LocalGitBranchCatalog()
+    private let gitBranchQueue = DispatchQueue(
+        label: "com.augustalabs.anton.git-branches",
+        qos: .userInitiated
+    )
     private var cancellables: Set<AnyCancellable> = []
     private var pendingCallouts = PendingCalloutQueue()
     private var queuedReplies: [String: [String]] = [:]
@@ -306,6 +311,42 @@ final class AppController: ObservableObject {
         return availableLaunchTerminals.first ?? .terminal
     }
 
+    var recentAgentBranches: [AgentBranchReference] {
+        var seen = Set<String>()
+        return resumableSessions
+            .sorted { $0.updatedAt > $1.updatedAt }
+            .compactMap { session in
+                guard
+                    let branch = normalizedGitBranch(session.gitBranch),
+                    !session.cwd.isEmpty,
+                    FileManager.default.fileExists(atPath: session.cwd)
+                else {
+                    return nil
+                }
+                let key = "\(session.cwd)\u{0}\(branch)"
+                guard seen.insert(key).inserted else { return nil }
+                return AgentBranchReference(
+                    name: branch,
+                    workspace: session.cwd,
+                    agent: session.agent,
+                    updatedAt: session.updatedAt
+                )
+            }
+    }
+
+    func loadGitBranches(
+        for workspace: String,
+        completion: @escaping (WorkspaceGitBranches) -> Void
+    ) {
+        let catalog = gitBranchCatalog
+        gitBranchQueue.async {
+            let snapshot = catalog.load(workspace: workspace)
+            DispatchQueue.main.async {
+                completion(snapshot)
+            }
+        }
+    }
+
     func chooseWorkspace(completion: @escaping (String?) -> Void) {
         panelController?.hideForSystemModal()
         let panel = NSOpenPanel()
@@ -354,6 +395,7 @@ final class AppController: ObservableObject {
         mode: AgentSessionLaunchMode,
         workspace: String,
         name: String,
+        gitBranch: String? = nil,
         initialPrompt: String,
         terminalKind: TerminalKind,
         candidate: ResumableAgentSession? = nil
@@ -392,6 +434,9 @@ final class AppController: ObservableObject {
             return
         }
         let normalizedName = normalizedSessionName(name)
+        let normalizedBranch = mode == .new
+            ? normalizedGitBranch(gitBranch)
+            : nil
         preferences.lastLaunchAgent = agent
         preferences.lastLaunchWorkspace = resolvedWorkspace
         preferences.lastLaunchTerminal = terminalKind
@@ -405,6 +450,7 @@ final class AppController: ObservableObject {
             cwd: resolvedWorkspace,
             priorSessionID: candidate?.sessionID,
             sessionName: normalizedName,
+            gitBranch: normalizedBranch,
             terminalKind: terminalKind
         )
         do {
@@ -419,6 +465,7 @@ final class AppController: ObservableObject {
             agentSessionID: "launch-\(token)",
             cwd: resolvedWorkspace,
             sessionName: normalizedName
+                ?? normalizedBranch
                 ?? candidate?.explicitName
                 ?? candidate?.gitBranch,
             model: candidate?.model,
@@ -569,6 +616,13 @@ final class AppController: ObservableObject {
             )
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return value.isEmpty ? nil : String(value.prefix(96))
+    }
+
+    private func normalizedGitBranch(_ branch: String?) -> String? {
+        guard let branch else { return nil }
+        let value = branch.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, value != "HEAD" else { return nil }
+        return value
     }
 
     private func executablePath(for agent: AgentKind) -> String? {
@@ -1200,7 +1254,7 @@ final class AppController: ObservableObject {
         }
     }
 
-    private func showMessage(_ message: String) {
+    func showMessage(_ message: String) {
         transientMessage = message
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
             if self?.transientMessage == message {

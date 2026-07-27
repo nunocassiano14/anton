@@ -15,12 +15,21 @@ struct SessionLauncherView: View {
     @State private var selectedSessionID: String?
     @State private var showPreviews = false
     @State private var showAdvanced = false
+    @State private var branchSnapshot = WorkspaceGitBranches.empty(workspace: "")
+    @State private var selectedBranch: String?
+    @State private var pendingBranchSelection: String?
+    @State private var branchLookupGeneration = 0
+    @State private var isLoadingBranches = false
     @FocusState private var promptFocused: Bool
 
     init(controller: AppController) {
         self.controller = controller
+        let initialWorkspace = controller.suggestedWorkspace
         _agent = State(initialValue: controller.preferredLaunchAgent)
-        _workspace = State(initialValue: controller.suggestedWorkspace)
+        _workspace = State(initialValue: initialWorkspace)
+        _branchSnapshot = State(
+            initialValue: WorkspaceGitBranches.empty(workspace: initialWorkspace)
+        )
         _terminalKind = State(initialValue: controller.defaultLaunchTerminal)
         _allWorkspaces = State(initialValue: controller.sessionStore.sessions.isEmpty)
     }
@@ -41,6 +50,7 @@ struct SessionLauncherView: View {
             if mode == .resume, selectedSessionID == nil {
                 selectedSessionID = filteredSessions.first?.id
             } else if mode == .new {
+                refreshBranchContext()
                 DispatchQueue.main.async {
                     promptFocused = true
                 }
@@ -53,7 +63,12 @@ struct SessionLauncherView: View {
         .onChange(of: mode) { _, newMode in
             if newMode == .resume {
                 selectedSessionID = filteredSessions.first?.id
+            } else {
+                refreshBranchContext()
             }
+        }
+        .onChange(of: workspace) { _, _ in
+            scheduleBranchRefresh()
         }
     }
 
@@ -125,8 +140,9 @@ struct SessionLauncherView: View {
             }
 
             HStack(spacing: 10) {
+                branchPicker
                 launcherTextField(
-                    "Session name · optional, otherwise branch",
+                    "Session name · optional",
                     text: $sessionName
                 )
                 Button {
@@ -156,7 +172,7 @@ struct SessionLauncherView: View {
 
             HStack(spacing: 14) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("Anton opens \(terminalKind.displayName) in the background")
+                    Text(launchSummary)
                         .font(.system(size: 10.5, weight: .medium))
                         .foregroundStyle(.white.opacity(0.45))
                     Text("Opening → connecting → sending prompt")
@@ -248,6 +264,90 @@ struct SessionLauncherView: View {
             .background(fieldSurface)
             .help("Choose workspace")
         }
+    }
+
+    private var branchPicker: some View {
+        Menu {
+            if !branchSnapshot.localBranches.isEmpty {
+                Section("Current workspace") {
+                    ForEach(branchSnapshot.localBranches, id: \.self) { branch in
+                        Button {
+                            chooseBranch(branch, workspace: branchSnapshot.workspace)
+                        } label: {
+                            HStack {
+                                Text(branch)
+                                if branch == branchSnapshot.currentBranch {
+                                    Text("Current")
+                                }
+                                if branch == selectedBranch {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !recentBranchReferences.isEmpty {
+                Section("From Claude & Codex") {
+                    ForEach(recentBranchReferences) { reference in
+                        Button {
+                            chooseBranch(
+                                reference.name,
+                                workspace: reference.workspace
+                            )
+                        } label: {
+                            Text(
+                                "\(reference.name) — "
+                                    + "\(workspaceLabel(reference.workspace)) · "
+                                    + (reference.agent == .claude ? "Claude" : "Codex")
+                            )
+                        }
+                    }
+                }
+            }
+
+            if branchSnapshot.localBranches.isEmpty,
+               recentBranchReferences.isEmpty
+            {
+                Text("No local or agent branches found")
+            }
+        } label: {
+            HStack(spacing: 7) {
+                if isLoadingBranches {
+                    ProgressView()
+                        .controlSize(.mini)
+                } else {
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(.system(size: 10, weight: .medium))
+                }
+                Text(branchPickerTitle)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.28))
+            }
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.white.opacity(selectedBranch == nil ? 0.38 : 0.72))
+            .padding(.horizontal, 11)
+            .frame(width: 255, height: 36)
+            .background(fieldSurface)
+        }
+        .menuStyle(.borderlessButton)
+        .disabled(
+            isLoadingBranches
+                || (
+                    branchSnapshot.localBranches.isEmpty
+                        && recentBranchReferences.isEmpty
+                )
+        )
+        .help(
+            selectedBranch == nil
+                ? "Choose a branch from this repository or recent agent history"
+                : "Anton starts the agent on \(selectedBranch ?? "")"
+        )
     }
 
     private var terminalPicker: some View {
@@ -571,7 +671,7 @@ struct SessionLauncherView: View {
         HStack(spacing: 7) {
             Image(systemName: "lock.fill")
                 .font(.system(size: 8))
-            Text("Local only · /rename name, otherwise Git branch")
+            Text("Local only · custom name → selected Git branch → workspace")
             Spacer()
             Text("⌘↩ start")
             Text("·")
@@ -599,6 +699,42 @@ struct SessionLauncherView: View {
         controller.resumableSessions.first { $0.id == selectedSessionID }
     }
 
+    private var recentBranchReferences: [AgentBranchReference] {
+        let localKeys = Set(
+            branchSnapshot.localBranches.map {
+                "\(branchSnapshot.workspace)\u{0}\($0)"
+            }
+        )
+        return Array(
+            controller.recentAgentBranches
+                .filter { !localKeys.contains($0.id) }
+                .prefix(12)
+        )
+    }
+
+    private var branchPickerTitle: String {
+        if isLoadingBranches {
+            return "Reading branches…"
+        }
+        if let selectedBranch {
+            return selectedBranch
+        }
+        if !recentBranchReferences.isEmpty {
+            return "Choose branch"
+        }
+        return "No Git branch"
+    }
+
+    private var launchSummary: String {
+        guard let selectedBranch else {
+            return "Anton opens \(terminalKind.displayName) in the background"
+        }
+        if branchSnapshot.currentBranch == selectedBranch {
+            return "Use \(selectedBranch), then open \(terminalKind.displayName)"
+        }
+        return "Switch to \(selectedBranch), then open \(terminalKind.displayName)"
+    }
+
     private var canStartNew: Bool {
         !workspace.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && workspaceExists(workspace)
@@ -619,9 +755,72 @@ struct SessionLauncherView: View {
             mode: .new,
             workspace: workspace,
             name: sessionName,
+            gitBranch: selectedBranch,
             initialPrompt: initialPrompt,
             terminalKind: terminalKind
         )
+    }
+
+    private func chooseBranch(_ branch: String, workspace branchWorkspace: String) {
+        selectedBranch = branch
+        let target = (branchWorkspace as NSString).standardizingPath
+        let current = (workspace as NSString).standardizingPath
+        guard target != current else { return }
+        pendingBranchSelection = branch
+        workspace = target
+    }
+
+    private func scheduleBranchRefresh() {
+        branchLookupGeneration += 1
+        let generation = branchLookupGeneration
+        isLoadingBranches = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            guard generation == branchLookupGeneration else { return }
+            loadBranchContext(generation: generation)
+        }
+    }
+
+    private func refreshBranchContext() {
+        branchLookupGeneration += 1
+        isLoadingBranches = true
+        loadBranchContext(generation: branchLookupGeneration)
+    }
+
+    private func loadBranchContext(generation: Int) {
+        let requestedWorkspace = workspace
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let preferredBranch = pendingBranchSelection
+        controller.loadGitBranches(for: requestedWorkspace) { snapshot in
+            guard
+                generation == branchLookupGeneration,
+                requestedWorkspace
+                    == workspace.trimmingCharacters(in: .whitespacesAndNewlines)
+            else {
+                return
+            }
+            branchSnapshot = snapshot
+            isLoadingBranches = false
+            pendingBranchSelection = nil
+            if let preferredBranch {
+                if snapshot.localBranches.contains(preferredBranch) {
+                    selectedBranch = preferredBranch
+                } else {
+                    selectedBranch = snapshot.currentBranch
+                    controller.showMessage(
+                        "\(preferredBranch) no longer exists locally in "
+                            + workspaceLabel(requestedWorkspace)
+                            + "."
+                    )
+                }
+            } else {
+                selectedBranch = snapshot.currentBranch
+            }
+        }
+    }
+
+    private func workspaceLabel(_ path: String) -> String {
+        let label = URL(fileURLWithPath: path).lastPathComponent
+        return label.isEmpty ? path : label
     }
 
     private func resumeSelected(mode: AgentSessionLaunchMode) {

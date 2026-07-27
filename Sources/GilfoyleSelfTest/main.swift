@@ -1391,6 +1391,26 @@ runner.run("new session command is quoted and carries only the launch token") {
     )
 }
 
+runner.run("new sessions switch to the selected Git branch before launch") {
+    let plan = AgentSessionLaunchPlan(
+        launchToken: "branch-token",
+        agent: .codex,
+        mode: .new,
+        executablePath: "/opt/bin/codex",
+        cwd: "/tmp/repo",
+        gitBranch: "feature/Nuno's-launcher",
+        terminalKind: .terminal
+    )
+    let command = try AgentLaunchCommandBuilder.command(for: plan)
+    try runner.require(
+        command.hasPrefix(
+            "cd -- '/tmp/repo' && /usr/bin/git switch -- "
+                + "'feature/Nuno'\\''s-launcher' && exec "
+        ),
+        "Selected Git branch was not switched safely before agent launch"
+    )
+}
+
 runner.run("resume and fork use native Claude and Codex commands") {
     func command(
         agent: AgentKind,

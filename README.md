@@ -10,6 +10,7 @@ The initial release supports Apple Silicon, macOS 14 or later, Terminal.app, iTe
 - Menu-bar status, Settings, setup, and quit controls
 - Global shortcut, `⌥⌘G`
 - Compact New-session composer with remembered agent, workspace, and terminal
+- Git branch picker combining the current repo with recent Claude/Codex branches
 - Separate Resume browser backed by local Claude and Codex history
 - Launcher shortcuts: `⌥⌘N` New, `⌥⌘R` Resume, `⌥⇧⌘R` Resume latest
 - Claude/Codex resume and fork commands with running-session detection
@@ -82,9 +83,12 @@ codex
 ```
 
 Or press `⌥⌘N` to start Claude Code or Codex from Anton. Choose the workspace,
-terminal, and an optional initial prompt. Anton opens the new terminal surface,
-waits for the official `SessionStart` hook, and only then submits the prompt to
-that exact session. The prompt is never placed in shell arguments.
+Git branch, terminal, and an optional initial prompt. The branch menu combines
+local branches in the selected repository with recent branch metadata from
+Claude and Codex sessions. Anton safely switches the workspace, opens the new
+terminal surface, waits for the official `SessionStart` hook, and only then
+submits the prompt to that exact session. The prompt is never placed in shell
+arguments.
 
 Press `⌥⌘R` to browse saved local sessions or `⌥⇧⌘R` to resume the most
 recent one. Anton reads Claude's local history index and Codex's local thread

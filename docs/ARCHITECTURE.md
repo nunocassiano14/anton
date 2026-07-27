@@ -106,11 +106,15 @@ Later sparse hook events merge with existing terminal context rather than erasin
 
 New and Resume are separate entry points. New opens a compact task composer;
 the last valid agent, workspace, and terminal are remembered, while terminal
-selection stays under progressive disclosure. Starting creates an optimistic
-card that moves through `Opening terminal`, `Connecting to agent`, optional
-Codex naming, and `Sending initial prompt`. Prompt text is delivered only after
-the exact `SessionStart` route is known. Immediate terminal-launch failures can
-be retried from that same card without re-entering the task.
+selection stays under progressive disclosure. Its branch picker reads local
+Git refs from the selected repository and merges them with recent branch
+metadata already present in Claude and Codex session history. Choosing a branch
+from another recent workspace moves the composer to that workspace. Starting
+safely runs `git switch -- <branch>` before the agent command, then creates an
+optimistic card that moves through `Opening terminal`, `Connecting to agent`,
+optional Codex naming, and `Sending initial prompt`. Prompt text is delivered
+only after the exact `SessionStart` route is known. Immediate terminal-launch
+failures can be retried from that same card without re-entering the task.
 
 The Resume browser can enumerate local session metadata without starting a shell:
 

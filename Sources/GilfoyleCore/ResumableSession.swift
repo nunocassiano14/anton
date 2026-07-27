@@ -116,6 +116,7 @@ public struct AgentSessionLaunchPlan: Equatable, Sendable {
     public let cwd: String
     public let priorSessionID: String?
     public let sessionName: String?
+    public let gitBranch: String?
     public let terminalKind: TerminalKind
 
     public init(
@@ -126,6 +127,7 @@ public struct AgentSessionLaunchPlan: Equatable, Sendable {
         cwd: String,
         priorSessionID: String? = nil,
         sessionName: String? = nil,
+        gitBranch: String? = nil,
         terminalKind: TerminalKind
     ) {
         self.launchToken = launchToken
@@ -135,6 +137,7 @@ public struct AgentSessionLaunchPlan: Equatable, Sendable {
         self.cwd = cwd
         self.priorSessionID = priorSessionID
         self.sessionName = sessionName
+        self.gitBranch = gitBranch
         self.terminalKind = terminalKind
     }
 }
@@ -198,7 +201,16 @@ public enum AgentLaunchCommandBuilder {
             arguments += ["fork", plan.priorSessionID ?? ""]
         }
 
-        return "cd -- \(quote(plan.cwd)) && exec "
+        let switchBranch: String
+        if plan.mode == .new, let branch = normalized(plan.gitBranch) {
+            switchBranch = "/usr/bin/git switch -- \(quote(branch)) && "
+        } else {
+            switchBranch = ""
+        }
+
+        return "cd -- \(quote(plan.cwd)) && "
+            + switchBranch
+            + "exec "
             + arguments.map(quote).joined(separator: " ")
     }
 
