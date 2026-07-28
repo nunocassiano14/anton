@@ -27,13 +27,8 @@ struct NotchRootView: View {
                 completionCallout(session: calloutSession)
                     .transition(.opacity.combined(with: .scale(scale: 0.985, anchor: .top)))
             } else if controller.isExpanded {
-                if controller.sessionLauncherMode != nil {
-                    SessionLauncherView(controller: controller)
-                        .transition(.opacity.combined(with: .scale(scale: 0.985, anchor: .top)))
-                } else {
-                    sessionBoard
-                        .transition(.opacity.combined(with: .scale(scale: 0.985, anchor: .top)))
-                }
+                sessionBoard
+                    .transition(.opacity.combined(with: .scale(scale: 0.985, anchor: .top)))
             } else {
                 compactContent
                     .transition(.opacity)
@@ -84,17 +79,6 @@ struct NotchRootView: View {
 
     private var compactContent: some View {
         HStack(spacing: 0) {
-            AntonMark(size: 23, glows: true, compactAnimation: true)
-                .frame(
-                    width: controller.compactAntonWingWidth,
-                    height: 46,
-                    alignment: .center
-                )
-
-            // This empty region is the actual camera housing.
-            Color.clear
-                .frame(width: controller.compactCameraWidth, height: 46)
-
             HStack(spacing: 6) {
                 ForEach(compactSessions, id: \.id) { session in
                     AgentPixelGlyph(
@@ -115,9 +99,20 @@ struct NotchRootView: View {
                         .foregroundStyle(.white.opacity(0.42))
                 }
             }
-            .padding(.leading, 12)
-            .padding(.trailing, 16)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .padding(.leading, 16)
+            .padding(.trailing, 12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+
+            // This empty region is the actual camera housing.
+            Color.clear
+                .frame(width: controller.compactCameraWidth, height: 46)
+
+            AntonMark(size: 23, glows: true, compactAnimation: true)
+                .frame(
+                    width: controller.compactAntonWingWidth,
+                    height: 46,
+                    alignment: .center
+                )
         }
         .frame(height: 46)
     }
@@ -468,14 +463,6 @@ struct NotchRootView: View {
                     .foregroundStyle(.white.opacity(0.38))
                 Spacer()
                 Button {
-                    controller.showSessionLauncher(mode: .new)
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .buttonStyle(NotchIconButtonStyle())
-                .help("Start or continue a session · ⌥⌘N")
-
-                Button {
                     controller.showSettings()
                 } label: {
                     Image(systemName: "gearshape")
@@ -510,23 +497,9 @@ struct NotchRootView: View {
             Text("No active agents")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.84))
-            Text("Start a new session or continue a named one.")
+            Text("Claude Code and Codex sessions appear here while they are running.")
                 .font(.system(size: 12))
                 .foregroundStyle(.white.opacity(0.42))
-            Button {
-                controller.showSessionLauncher(mode: .new)
-            } label: {
-                Label("Start session", systemImage: "plus")
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color.white.opacity(0.11))
-                    )
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.white.opacity(0.78))
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

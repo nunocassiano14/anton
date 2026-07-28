@@ -57,22 +57,13 @@ public struct ShortcutConfiguration: Codable, Equatable, Sendable {
 public struct StoredPreferences: Codable, Equatable, Sendable {
     public var shortcut: ShortcutConfiguration
     public var onboardingComplete: Bool
-    public var lastLaunchAgent: AgentKind?
-    public var lastLaunchWorkspace: String?
-    public var lastLaunchTerminal: TerminalKind?
 
     public init(
         shortcut: ShortcutConfiguration = .defaultShortcut,
-        onboardingComplete: Bool = false,
-        lastLaunchAgent: AgentKind? = nil,
-        lastLaunchWorkspace: String? = nil,
-        lastLaunchTerminal: TerminalKind? = nil
+        onboardingComplete: Bool = false
     ) {
         self.shortcut = shortcut
         self.onboardingComplete = onboardingComplete
-        self.lastLaunchAgent = lastLaunchAgent
-        self.lastLaunchWorkspace = lastLaunchWorkspace
-        self.lastLaunchTerminal = lastLaunchTerminal
     }
 }
 

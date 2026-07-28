@@ -199,9 +199,6 @@ final class NotchPanelController: NSWindowController {
             // The measured SwiftUI callout already includes its camera inset;
             // adding screen safe-area space again creates blank black space.
             height = min(screen.visibleFrame.height - 90, contentHeight)
-        } else if controller?.sessionLauncherMode != nil {
-            // New and Existing are two states of one compact launcher.
-            height = min(640, screen.visibleFrame.height - 50)
         } else {
             height = min(780, screen.visibleFrame.height - 50)
         }
@@ -215,8 +212,8 @@ final class NotchPanelController: NSWindowController {
     }
 
     /// Keep the camera housing covered while sizing its two wings
-    /// independently: the exact icon allowance for Anton on the left and only
-    /// as much room as the live agent cluster needs on the right.
+    /// independently: only as much room as the live agent cluster needs on
+    /// the left and the exact icon allowance for Anton on the right.
     private func compactGeometry(
         for screen: NSScreen
     ) -> (minX: CGFloat, width: CGFloat, cameraWidth: CGFloat) {
@@ -244,7 +241,7 @@ final class NotchPanelController: NSWindowController {
         let antonWing = controller?.compactAntonWingWidth ?? 55
         let agentsWing = 28 + glyphsWidth + overflowWidth
         let width = antonWing + (cameraMaxX - cameraMinX) + agentsWing
-        let unclampedMinX = cameraMinX - antonWing
+        let unclampedMinX = cameraMinX - agentsWing
         let minX = min(
             max(unclampedMinX, screen.frame.minX + 24),
             screen.frame.maxX - 24 - width

@@ -19,7 +19,7 @@ enum TerminalAutomationError: LocalizedError {
     }
 }
 
-final class TerminalAutomationController: TerminalSessionControlling, TerminalSessionLaunching {
+final class TerminalAutomationController: TerminalSessionControlling {
     private let queue = DispatchQueue(label: "com.augustalabs.anton.terminal-automation")
 
     func focus(session: AgentSession, completion: @escaping (Result<Void, Error>) -> Void) {
@@ -46,68 +46,6 @@ final class TerminalAutomationController: TerminalSessionControlling, TerminalSe
         completion: @escaping (Result<Void, Error>) -> Void
     ) {
         perform(action: .close, session: session, text: nil, completion: completion)
-    }
-
-    func launch(
-        plan: AgentSessionLaunchPlan,
-        completion: @escaping (Result<TerminalContext, Error>) -> Void
-    ) {
-        let foregroundApplication = NSWorkspace.shared.frontmostApplication
-        queue.async {
-            do {
-                let command = try AgentLaunchCommandBuilder.command(for: plan)
-                let context: TerminalContext
-                switch plan.terminalKind {
-                case .terminal:
-                    let tty = try self.runAppleScript(
-                        TerminalAutomationScripts.terminalLaunch,
-                        arguments: [command]
-                    ).trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard tty.hasPrefix("/dev/") else {
-                        throw TerminalAutomationError.targetNotFound
-                    }
-                    context = TerminalContext(
-                        kind: .terminal,
-                        termProgram: "Apple_Terminal",
-                        tty: tty
-                    )
-                case .iTerm:
-                    let output = try self.runAppleScript(
-                        TerminalAutomationScripts.iTermLaunch,
-                        arguments: [command]
-                    ).trimmingCharacters(in: .whitespacesAndNewlines)
-                    let fields = output.split(
-                        separator: "\t",
-                        maxSplits: 1,
-                        omittingEmptySubsequences: false
-                    )
-                    guard fields.count == 2, String(fields[1]).hasPrefix("/dev/") else {
-                        throw TerminalAutomationError.targetNotFound
-                    }
-                    context = TerminalContext(
-                        kind: .iTerm,
-                        termProgram: "iTerm.app",
-                        iTermSessionID: String(fields[0]),
-                        tty: String(fields[1])
-                    )
-                case .unknown:
-                    throw AgentSessionLaunchError.unsupportedTerminal
-                }
-                DispatchQueue.main.async {
-                    if let foregroundApplication, !foregroundApplication.isTerminated {
-                        foregroundApplication.activate()
-                    }
-                    completion(.success(context))
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    if let foregroundApplication, !foregroundApplication.isTerminated {
-                        foregroundApplication.activate()
-                    }
-                    completion(.failure(error))
-                }
-            }
-        }
     }
 
     private enum Action {

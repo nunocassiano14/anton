@@ -5,55 +5,6 @@ import Foundation
 /// can still foreground itself as a side effect of `do script`; the app layer
 /// restores the previously active application after background delivery.
 public enum TerminalAutomationScripts {
-    public static let terminalLaunch = """
-    on run argv
-        set commandText to item 1 of argv
-        tell application "Terminal"
-            if (count of windows) is 0 then
-                set launchTab to do script commandText
-            else
-                set launchTab to do script commandText in front window
-            end if
-            repeat 40 times
-                try
-                    set launchTTY to tty of launchTab
-                    if launchTTY is not "" then return launchTTY
-                end try
-                delay 0.05
-            end repeat
-        end tell
-        return "not-ready"
-    end run
-    """
-
-    public static let iTermLaunch = """
-    on run argv
-        set commandText to item 1 of argv
-        tell application "iTerm2"
-            if (count of windows) is 0 then
-                set launchWindow to create window with default profile command commandText
-                set launchSession to current session of launchWindow
-            else
-                tell current window
-                    set launchTab to create tab with default profile command commandText
-                    set launchSession to current session of launchTab
-                end tell
-            end if
-            repeat 40 times
-                try
-                    set launchIdentifier to unique ID of launchSession
-                    set launchTTY to tty of launchSession
-                    if launchIdentifier is not "" and launchTTY is not "" then
-                        return launchIdentifier & tab & launchTTY
-                    end if
-                end try
-                delay 0.05
-            end repeat
-        end tell
-        return "not-ready"
-    end run
-    """
-
     public static let terminalSend = """
     on run argv
         set targetTTY to item 1 of argv

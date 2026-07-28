@@ -21,11 +21,6 @@ Claude Code / Codex
 Native reply editor ──► TerminalRouteResolver
                        ├── Terminal.app: exact TTY
                        └── iTerm2: unique session ID, then TTY fallback
-
-Claude history.jsonl ─┐
-                     ├──► LocalSessionCatalog ──► New / Resume launcher
-Codex state SQLite ───┘            │
-                                   └── user action ──► exact new terminal surface
 ```
 
 ## Targets
@@ -73,7 +68,6 @@ The app uses:
 - `NSStatusItem` for the menu-bar interface
 - `NSTextView` for the multiline reply editor
 - Carbon hot keys for the `⌥⌘G` global shortcut
-- A native session launcher with `⌥⌘N`, `⌥⌘R`, and `⌥⇧⌘R`
 - Apple Events through `osascript` for exact Terminal/iTerm handoff
 - A per-user launchd agent for login startup and abnormal-exit recovery
 
@@ -101,54 +95,6 @@ Terminal targeting is deliberately separate from that logical key:
 - Unknown terminals or sessions without stable targeting metadata are rejected instead of sending to a guessed or frontmost tab.
 
 Later sparse hook events merge with existing terminal context rather than erasing a previously discovered identifier.
-
-## Session launcher
-
-New and Resume are separate entry points. New opens a compact task composer;
-the last valid agent, workspace, and terminal are remembered, while terminal
-selection stays under progressive disclosure. Its branch picker reads local
-Git refs from the selected repository and merges them with recent branch
-metadata already present in Claude and Codex session history. Choosing a branch
-from another recent workspace moves the composer to that workspace. Starting
-safely runs `git switch -- <branch>` before the agent command, then creates an
-optimistic card that moves through `Opening terminal`, `Connecting to agent`,
-optional Codex naming, and `Sending initial prompt`. Prompt text is delivered
-only after the exact `SessionStart` route is known. Immediate terminal-launch
-failures can be retried from that same card without re-entering the task.
-
-The Resume browser can enumerate local session metadata without starting a shell:
-
-- Claude Code: a bounded tail of `~/.claude/history.jsonl`
-- Codex: read-only queries against `~/.codex/state_5.sqlite`, with
-  `~/.codex/session_index.jsonl` supplying explicit `/rename` names and acting
-  as a compatibility fallback
-
-Malformed rows are ignored, archived Codex threads are excluded, duplicates
-are reduced to their newest timestamp, and the in-memory catalog is capped.
-For Claude, Anton reads `custom-title` records only from transcripts already
-identified by that bounded history index. History rows whose required
-transcript no longer exists are omitted because Claude cannot resume them. The
-UI title prefers the user's
-explicit `/rename` or `--name`, then the historical Git branch, and finally an
-honest workspace label. Prompt text is never used as the visible title. Longer
-prompt/response previews stay hidden until the user explicitly enables them.
-Anton does not create a session-history database.
-
-Starting or resuming is a separate, explicit mutation. `AgentLaunchCommandBuilder`
-constructs a POSIX-quoted command for the chosen working directory and the
-installed executable:
-
-- Claude: `claude`, `claude --resume <id>`, or
-  `claude --resume <id> --fork-session`
-- Codex: `codex`, `codex resume <id>`, or `codex fork <id>`
-
-An `ANTON_LAUNCH_TOKEN` correlates the provisional board row with the first
-official hook. The optional initial prompt is deliberately absent from the
-process arguments. Anton sends it through the exact Terminal/iTerm route only
-after `SessionStart`; if startup stalls, the provisional row becomes an
-actionable error instead of guessing that the CLI is ready. A saved session
-that already matches a live agent session is focused on the board and is never
-started twice.
 
 ## Agent event mapping
 
@@ -229,7 +175,6 @@ Persistent:
 Memory only:
 
 - Session board
-- Parsed New/Resume catalog metadata
 - Current activity and last action
 - A sanitized local Codex activity label derived from the latest tool call
 - A bounded Claude transcript snapshot used to recover the latest turn state

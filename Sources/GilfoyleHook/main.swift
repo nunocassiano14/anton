@@ -17,18 +17,11 @@ private enum HookRuntime {
 
         do {
             let terminal = TerminalContextResolver.resolve(agent: agent)
-            var request = try adapter.decode(
+            let request = try adapter.decode(
                 data: input,
                 terminal: terminal,
                 token: token
             )
-            if let launchToken = ProcessInfo.processInfo.environment[
-                "ANTON_LAUNCH_TOKEN"
-            ]?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !launchToken.isEmpty
-            {
-                request.event.metadata["antonLaunchToken"] = .string(launchToken)
-            }
             let interactive = request.event.name == "PermissionRequest"
                 || request.event.name == "Elicitation"
                 || (

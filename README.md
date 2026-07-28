@@ -9,17 +9,10 @@ The initial release supports Apple Silicon, macOS 14 or later, Terminal.app, iTe
 - Compact primary-display notch surface, response callout, and expandable live session board
 - Menu-bar status, Settings, setup, and quit controls
 - Global shortcut, `⌥⌘G`
-- Unified session launcher: choose Claude Code or Codex, then New or Existing
-- New-session composer with advanced workspace, branch, name, and terminal options
-- Git branch picker combining the current repo with recent Claude/Codex branches
-- Named Existing-session browser backed by local Claude and Codex history
-- Launcher shortcuts: `⌥⌘N` New, `⌥⌘R` Resume, `⌥⇧⌘R` Resume latest
-- Claude/Codex resume and fork commands with running-session detection
 - Claude Code and Codex lifecycle adapters using official hooks
 - Exact Terminal.app targeting by TTY
 - Exact iTerm2 targeting by session unique ID, with TTY fallback
 - Native reply editor compatible with normal macOS dictation and Wispr Flow
-- Continuous text selection across response lines, paragraphs, lists, and code
 - Enter to send, Shift+Enter for a newline, and Escape to close
 - Allow and Deny actions for approval requests
 - Choice buttons and free-form fields for structured questions
@@ -84,23 +77,6 @@ claude
 codex
 ```
 
-Or press `⌥⌘N` to open Anton's session launcher. First choose Claude Code or
-Codex, then choose New or Existing. New keeps the task prompt visible and puts
-workspace, Git branch, optional name, and terminal under Options. The branch
-menu combines local branches in the selected repository with recent branch
-metadata from Claude and Codex sessions. Anton safely switches the workspace,
-opens the new terminal surface, waits for the official `SessionStart` hook,
-and only then submits the prompt to that exact session. The prompt is never
-placed in shell arguments.
-
-Choose Existing, or press `⌥⌘R`, to browse named local sessions in the same
-launcher. `⌥⇧⌘R` resumes the most recent one. Anton reads Claude's local history
-index and Codex's local thread database directly; opening the browser does not
-start Terminal. Previews are hidden until explicitly enabled. A session that
-is already running is opened on the live board rather than launched twice.
-Resume and Fork create a terminal surface only after the user chooses the
-action.
-
 Click the compact notch surface or press `⌥⌘G` to open the board. Each flat session row identifies the agent, project, model, terminal, state, activity, start time, and last action when the hook exposes that information.
 
 When a main turn finishes, Anton expands into a focused visual callout. Type or dictate in that session's native editor and press Enter. You can also paste an image or attach a local file. Anton resolves the stored Terminal TTY or iTerm unique session ID before sending, so it never targets whichever terminal happens to be focused. It waits for the agent's lifecycle acknowledgement and retries a background-only Return if Terminal pasted the prompt without submitting it. If another agent finishes while a callout is visible, Anton queues it; urgent approvals and questions move ahead of normal completions.
@@ -119,21 +95,13 @@ Run the deterministic standalone suite:
 ./Scripts/test.sh
 ```
 
-The suite exercises state transitions, visual completion signals, local session
-history parsing, safe New/Resume/Fork command construction, event privacy,
-agent adapters, exact terminal identity, reply and interaction routing,
-settings persistence, hook output schemas, configuration preservation and
-removal, and authenticated local IPC.
+The suite exercises state transitions, visual completion signals, event privacy, agent adapters, exact terminal identity, reply and interaction routing, settings persistence, hook output schemas, configuration preservation and removal, and authenticated local IPC.
 
 The same cases are also expressed with Swift Testing under `Tests/GilfoyleCoreTests`. On a complete Xcode installation, `Scripts/test.sh` additionally runs the standard SwiftPM test suite.
 
 ## Privacy
 
-Anton has no accounts, analytics, telemetry, subscription code, cloud backend,
-HTTP client, or runtime network requests. The Resume browser performs read-only
-access to Claude and Codex metadata that already exists on the Mac; Anton does
-not copy it into its own database. Its only runtime communication channel is a
-private Unix-domain socket under:
+Anton has no accounts, analytics, telemetry, subscription code, cloud backend, HTTP client, or runtime network requests. Its only runtime communication channel is a private Unix-domain socket under:
 
 ```text
 ~/Library/Application Support/Anton/
