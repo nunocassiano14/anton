@@ -79,14 +79,17 @@ struct NotchRootView: View {
 
     private var compactContent: some View {
         HStack(spacing: 0) {
-            HStack(spacing: 6) {
+            HStack(spacing: controller.compactAgentSpacing) {
                 ForEach(compactSessions, id: \.id) { session in
                     AgentPixelGlyph(
                         agent: session.agent,
                         state: session.state,
                         animationSeed: session.id
                     )
-                    .frame(width: 21, height: 21)
+                    .frame(
+                        width: controller.compactAgentGlyphWidth,
+                        height: controller.compactAgentGlyphWidth
+                    )
                     // Working is the only high-energy signal in compact
                     // mode. Ready, idle and attention states remain visible
                     // by agent colour, but recede until they need opening.
@@ -99,9 +102,13 @@ struct NotchRootView: View {
                         .foregroundStyle(.white.opacity(0.42))
                 }
             }
-            .padding(.leading, 16)
-            .padding(.trailing, 12)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+            .padding(.leading, controller.compactAgentsOuterPadding)
+            .padding(.trailing, controller.compactAgentsCameraPadding)
+            .frame(
+                width: controller.compactAgentsWingWidth,
+                height: 46,
+                alignment: .trailing
+            )
 
             // This empty region is the actual camera housing.
             Color.clear

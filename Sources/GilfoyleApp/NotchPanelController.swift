@@ -232,14 +232,8 @@ final class NotchPanelController: NSWindowController {
             cameraMaxX = screen.frame.midX + 75
         }
 
-        let totalCount = controller?.sessionStore.sessions.count ?? 0
-        let visibleCount = controller?.compactVisibleSessionCount ?? 0
-        let glyphsWidth: CGFloat = visibleCount == 0
-            ? 0
-            : CGFloat(visibleCount * 21 + max(0, visibleCount - 1) * 6)
-        let overflowWidth: CGFloat = totalCount > visibleCount ? 28 : 0
-        let antonWing = controller?.compactAntonWingWidth ?? 55
-        let agentsWing = 28 + glyphsWidth + overflowWidth
+        let antonWing = controller?.compactAntonWingWidth ?? 39
+        let agentsWing = controller?.compactAgentsWingWidth ?? 28
         let width = antonWing + (cameraMaxX - cameraMinX) + agentsWing
         let unclampedMinX = cameraMinX - agentsWing
         let minX = min(
