@@ -44,8 +44,7 @@ final class AppController: ObservableObject {
     }
 
     var compactVisibleSessionCount: Int {
-        let count = sessionStore.sessions.count
-        return count >= 6 ? 4 : count
+        min(sessionStore.sessions.count, 4)
     }
 
     var compactAgentsWingWidth: CGFloat {
