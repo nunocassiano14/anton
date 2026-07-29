@@ -22,10 +22,10 @@ final class AppController: ObservableObject {
     @Published private(set) var compactCameraWidth: CGFloat = 150
     @Published private(set) var endingSessionIDs: Set<String> = []
     private var calloutAccessoryHeight: CGFloat = 0
-    let compactAntonWingWidth: CGFloat = 39
+    let compactAntonWingWidth: CGFloat = 47
     let compactAgentGlyphWidth: CGFloat = 21
     let compactAgentSpacing: CGFloat = 6
-    let compactAgentsOuterPadding: CGFloat = 16
+    let compactAgentsOuterPadding: CGFloat = 12
     let compactAgentsCameraPadding: CGFloat = 12
     let compactOverflowAllowance: CGFloat = 28
 

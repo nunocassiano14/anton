@@ -104,24 +104,18 @@ struct NotchRootView: View {
             }
             .padding(.leading, controller.compactAgentsOuterPadding)
             .padding(.trailing, controller.compactAgentsCameraPadding)
-            .frame(
-                width: controller.compactAgentsWingWidth,
-                height: 46,
-                alignment: .trailing
-            )
+            .frame(width: controller.compactAgentsWingWidth)
+            .frame(maxHeight: .infinity, alignment: .trailing)
 
             // This empty region is the actual camera housing.
             Color.clear
-                .frame(width: controller.compactCameraWidth, height: 46)
+                .frame(width: controller.compactCameraWidth)
 
             AntonMark(size: 23, glows: true, compactAnimation: true)
-                .frame(
-                    width: controller.compactAntonWingWidth,
-                    height: 46,
-                    alignment: .center
-                )
+                .frame(width: controller.compactAntonWingWidth)
+                .frame(maxHeight: .infinity, alignment: .center)
         }
-        .frame(height: 46)
+        .frame(maxHeight: .infinity)
     }
 
     private func completionCallout(session: AgentSession) -> some View {
