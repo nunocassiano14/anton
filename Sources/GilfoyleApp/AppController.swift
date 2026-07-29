@@ -22,11 +22,13 @@ final class AppController: ObservableObject {
     @Published private(set) var compactCameraWidth: CGFloat = 150
     @Published private(set) var endingSessionIDs: Set<String> = []
     private var calloutAccessoryHeight: CGFloat = 0
-    let compactAntonWingWidth: CGFloat = 47
+    let compactAntonGlyphWidth: CGFloat = 23
+    let compactAntonCameraPadding: CGFloat = 4
+    let compactAntonOuterPadding: CGFloat = 12
     let compactAgentGlyphWidth: CGFloat = 21
     let compactAgentSpacing: CGFloat = 6
     let compactAgentsOuterPadding: CGFloat = 12
-    let compactAgentsCameraPadding: CGFloat = 12
+    let compactAgentsCameraPadding: CGFloat = 4
     let compactOverflowAllowance: CGFloat = 28
 
     var preferredCalloutBodyHeight: CGFloat {
@@ -58,6 +60,12 @@ final class AppController: ObservableObject {
             + glyphSpacing
             + overflowWidth
             + compactAgentsCameraPadding
+    }
+
+    var compactAntonWingWidth: CGFloat {
+        compactAntonCameraPadding
+            + compactAntonGlyphWidth
+            + compactAntonOuterPadding
     }
 
     func updateCompactCameraWidth(_ width: CGFloat) {

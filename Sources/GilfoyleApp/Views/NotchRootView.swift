@@ -111,9 +111,19 @@ struct NotchRootView: View {
             Color.clear
                 .frame(width: controller.compactCameraWidth)
 
-            AntonMark(size: 23, glows: true, compactAnimation: true)
-                .frame(width: controller.compactAntonWingWidth)
-                .frame(maxHeight: .infinity, alignment: .center)
+            HStack(spacing: 0) {
+                Color.clear
+                    .frame(width: controller.compactAntonCameraPadding)
+                AntonMark(
+                    size: controller.compactAntonGlyphWidth,
+                    glows: true,
+                    compactAnimation: true
+                )
+                Color.clear
+                    .frame(width: controller.compactAntonOuterPadding)
+            }
+            .frame(width: controller.compactAntonWingWidth)
+            .frame(maxHeight: .infinity)
         }
         .frame(maxHeight: .infinity)
     }

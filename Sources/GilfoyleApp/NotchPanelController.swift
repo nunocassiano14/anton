@@ -232,7 +232,7 @@ final class NotchPanelController: NSWindowController {
             cameraMaxX = screen.frame.midX + 75
         }
 
-        let antonWing = controller?.compactAntonWingWidth ?? 47
+        let antonWing = controller?.compactAntonWingWidth ?? 39
         let agentsWing = controller?.compactAgentsWingWidth ?? 28
         let width = antonWing + (cameraMaxX - cameraMinX) + agentsWing
         let unclampedMinX = cameraMinX - agentsWing
