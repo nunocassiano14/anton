@@ -172,6 +172,7 @@ struct SessionCardView: View {
                   pending.kind == .question || pending.kind == .elicitation {
             QuestionInteractionView(
                 interaction: pending,
+                onBeginEditing: { controller.beginExplicitReply() },
                 submit: {
                     controller.answer(
                         interactionID: pending.id,
@@ -474,7 +475,7 @@ private struct EndSessionConfirmationView: View {
     }
 }
 
-private struct ApprovalInteractionView: View {
+struct ApprovalInteractionView: View {
     let interaction: PendingInteraction
     let allow: () -> Void
     let deny: () -> Void
@@ -505,8 +506,9 @@ private struct ApprovalInteractionView: View {
     }
 }
 
-private struct QuestionInteractionView: View {
+struct QuestionInteractionView: View {
     let interaction: PendingInteraction
+    var onBeginEditing: () -> Void = {}
     let submit: ([String: String]) -> Void
     let cancel: () -> Void
 
@@ -574,6 +576,9 @@ private struct QuestionInteractionView: View {
                         RoundedRectangle(cornerRadius: 9, style: .continuous)
                             .stroke(Color.white.opacity(0.08), lineWidth: 0.8)
                     }
+                    .simultaneousGesture(
+                        TapGesture().onEnded { onBeginEditing() }
+                    )
                     .onSubmit {
                         if !answers.isEmpty { submit(answers) }
                     }

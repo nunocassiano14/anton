@@ -118,6 +118,40 @@ struct RoutingAndPreferencesTests {
         )
     }
 
+    @Test("Interactive requests block ordinary and queued terminal prompts")
+    func interactiveRequestsOwnTheTerminalComposer() {
+        var session = AgentSession(
+            agent: .codex,
+            agentSessionID: "interactive",
+            cwd: "/tmp/project",
+            state: .finished
+        )
+        #expect(PromptSubmissionPolicy.canSubmitFreeformPrompt(to: session))
+        #expect(PromptSubmissionPolicy.canDeliverQueuedPrompt(to: session))
+
+        session.state = .hasQuestion
+        session.interaction = PendingInteraction(
+            id: "question",
+            kind: .question,
+            title: "Streaming",
+            questions: [
+                AgentQuestion(
+                    id: "streaming",
+                    prompt: "Should streaming be real?",
+                    options: [AgentQuestionOption(id: "real", label: "Real")]
+                )
+            ]
+        )
+        #expect(!PromptSubmissionPolicy.canSubmitFreeformPrompt(to: session))
+        #expect(!PromptSubmissionPolicy.canDeliverQueuedPrompt(to: session))
+
+        // The interaction object is authoritative even if a late callback
+        // still carries the preceding finished state.
+        session.state = .finished
+        #expect(!PromptSubmissionPolicy.canSubmitFreeformPrompt(to: session))
+        #expect(!PromptSubmissionPolicy.canDeliverQueuedPrompt(to: session))
+    }
+
     @Test("Numbered lists keep indented continuation paragraphs in one run")
     func numberedListsKeepTheirSequence() {
         let blocks = MarkdownBlockParser.parse(

@@ -100,6 +100,41 @@ struct SessionReducerTests {
         )
     }
 
+    @Test("A question arriving after Stop supersedes the completed composer")
+    func questionAfterStopOwnsTheNextInput() {
+        var reduction = SessionReducer.reduce(
+            existing: nil,
+            request: request(event: "Stop", assistantMessage: "Before I continue…")
+        )
+        #expect(reduction.didCompleteMainTurn)
+        #expect(reduction.session.state == .finished)
+
+        reduction = SessionReducer.reduce(
+            existing: reduction.session,
+            request: request(
+                event: "PreToolUse",
+                toolName: "request_user_input",
+                toolInput: .object([
+                    "questions": .array([
+                        .object([
+                            "id": .string("streaming"),
+                            "question": .string("Should streaming be real?"),
+                            "options": .array([
+                                .object(["label": .string("Guided")]),
+                                .object(["label": .string("Real")])
+                            ])
+                        ])
+                    ])
+                ])
+            )
+        )
+
+        #expect(reduction.requiresInteractiveResponse)
+        #expect(reduction.session.state == .hasQuestion)
+        #expect(reduction.session.interaction?.questions.first?.options.count == 2)
+        #expect(!PromptSubmissionPolicy.canDeliverQueuedPrompt(to: reduction.session))
+    }
+
     @Test("Terminal identity survives sparse later events")
     func terminalIdentityIsMergedWithoutLosingKnownTTY() {
         let initialTerminal = TerminalContext(

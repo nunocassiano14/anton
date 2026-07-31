@@ -246,7 +246,11 @@ final class SessionStore: ObservableObject {
         // automation callback. In that case the authoritative activity is
         // already visible; never overwrite "Thinking", a live tool, or a
         // recovered completion with the weaker delivery acknowledgement.
-        guard session(id: sessionID)?.state != .working else { return false }
+        guard let current = session(id: sessionID),
+              PromptSubmissionPolicy.canSubmitFreeformPrompt(to: current)
+        else {
+            return false
+        }
         update(sessionID: sessionID) {
             $0.state = .working
             $0.currentActivity = activity

@@ -993,6 +993,37 @@ runner.run("attention cards open once but always remain collapsible") {
     )
 }
 
+runner.run("interactive requests own the terminal composer") {
+    var session = AgentSession(
+        agent: .codex,
+        agentSessionID: "interactive",
+        cwd: "/tmp/anton",
+        state: .finished
+    )
+    try runner.require(
+        PromptSubmissionPolicy.canSubmitFreeformPrompt(to: session)
+            && PromptSubmissionPolicy.canDeliverQueuedPrompt(to: session),
+        "A completed session must accept its next prompt"
+    )
+    session.state = .hasQuestion
+    session.interaction = PendingInteraction(
+        id: "question",
+        kind: .question,
+        title: "Streaming",
+        questions: [AgentQuestion(id: "streaming", prompt: "Real streaming?")]
+    )
+    try runner.require(
+        !PromptSubmissionPolicy.canSubmitFreeformPrompt(to: session)
+            && !PromptSubmissionPolicy.canDeliverQueuedPrompt(to: session),
+        "A question must block unrelated terminal input"
+    )
+    session.state = .finished
+    try runner.require(
+        !PromptSubmissionPolicy.canDeliverQueuedPrompt(to: session),
+        "A late completion callback must not override a pending interaction"
+    )
+}
+
 runner.run("numbered Markdown lists keep one continuous sequence") {
     let blocks = MarkdownBlockParser.parse(
         """

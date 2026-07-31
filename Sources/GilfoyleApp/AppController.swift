@@ -33,9 +33,28 @@ final class AppController: ObservableObject {
 
     var preferredCalloutBodyHeight: CGFloat {
         guard let sessionID = calloutSessionID,
-              let preview = sessionStore.session(id: sessionID)?.lastResponsePreview,
-              !preview.isEmpty
-        else { return 256 + calloutAccessoryHeight }
+              let session = sessionStore.session(id: sessionID)
+        else {
+            return 256 + calloutAccessoryHeight
+        }
+        if let interaction = session.interaction {
+            if interaction.kind == .approval {
+                return 280
+            }
+            let questionCount = max(1, interaction.questions.count)
+            let wrappedOptionRows = interaction.questions.reduce(0) { total, question in
+                total + max(1, Int(ceil(Double(question.options.count) / 4)))
+            }
+            let extraQuestions = max(0, questionCount - 1)
+            let extraOptionRows = max(0, wrappedOptionRows - questionCount)
+            let interactionHeight = 340
+                + CGFloat(extraQuestions) * 120
+                + CGFloat(extraOptionRows) * 32
+            return min(532, interactionHeight)
+        }
+        guard let preview = session.lastResponsePreview, !preview.isEmpty else {
+            return 256 + calloutAccessoryHeight
+        }
         let visualLines = preview.components(separatedBy: .newlines).reduce(0) { total, line in
             total + max(1, Int(ceil(Double(line.count) / 90)))
         }
@@ -86,6 +105,10 @@ final class AppController: ObservableObject {
     private var cancellables: Set<AnyCancellable> = []
     private var pendingCallouts = PendingCalloutQueue()
     private var queuedReplies: [String: [String]] = [:]
+    /// A Stop event can arrive a fraction before an interactive question.
+    /// Tokens let that later event cancel the queued-prompt delivery without
+    /// racing a DispatchQueue work item that has already been scheduled.
+    private var queuedReplyDeliveryTokens: [String: UUID] = [:]
 
     private var panelController: NotchPanelController?
     private var settingsWindowController: NSWindowController?
@@ -345,6 +368,11 @@ final class AppController: ObservableObject {
             completion(false)
             return
         }
+        guard PromptSubmissionPolicy.canSubmitFreeformPrompt(to: session) else {
+            showMessage("Answer the pending agent question before sending a new prompt.")
+            completion(false)
+            return
+        }
         terminalAutomation.send(text: trimmed, to: session) { [weak self] result in
             switch result {
             case .success:
@@ -357,13 +385,26 @@ final class AppController: ObservableObject {
                     sessionID: sessionID,
                     activity: activity
                 )
-                self.collapsePanel()
                 if needsAcknowledgement {
+                    self.collapsePanel()
                     self.ensurePromptStarted(
                         sessionID: sessionID,
                         session: session,
                         expectedActivity: activity
                     )
+                } else if self.sessionStore.session(id: sessionID)?.state == .working {
+                    // The official UserPromptSubmit hook beat this callback.
+                    // Submission is confirmed, so the callout may close.
+                    self.collapsePanel()
+                } else if let current = self.sessionStore.session(id: sessionID),
+                          current.interaction != nil
+                {
+                    // A question arrived while the terminal automation was
+                    // returning. Never hide or overwrite the interactive UI.
+                    self.showUrgentCallout(sessionID: sessionID)
+                    self.showMessage("Answer the agent question before sending another prompt.")
+                    completion(false)
+                    return
                 }
                 completion(true)
             case .failure(let error):
@@ -377,7 +418,13 @@ final class AppController: ObservableObject {
     /// message is sent silently as soon as the current turn finishes.
     func queueReply(_ text: String, to sessionID: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, sessionStore.session(id: sessionID) != nil else { return }
+        guard !trimmed.isEmpty,
+              let session = sessionStore.session(id: sessionID),
+              session.state == .working,
+              session.interaction == nil
+        else {
+            return
+        }
         queuedReplies[sessionID, default: []].append(trimmed)
         showMessage("Message queued for the next turn.")
     }
@@ -434,6 +481,8 @@ final class AppController: ObservableObject {
     }
 
     func dismiss(sessionID: String) {
+        cancelQueuedReplyDelivery(sessionID: sessionID)
+        queuedReplies.removeValue(forKey: sessionID)
         pendingCallouts.remove(sessionID: sessionID)
         pendingCalloutCount = pendingCallouts.count
         if calloutSessionID == sessionID {
@@ -513,6 +562,10 @@ final class AppController: ObservableObject {
         respond: @escaping UnixSocketServer.ResponseHandler
     ) {
         let reduction = sessionStore.ingest(request)
+        // Any event after Stop invalidates its tentative delivery. This is
+        // especially important for request_user_input, whose PreToolUse hook
+        // can follow the apparent completion boundary by a few milliseconds.
+        cancelQueuedReplyDelivery(sessionID: reduction.session.id)
         let metadata = LocalAgentSessionMetadata.titleAndModel(
             agent: reduction.session.agent,
             sessionID: reduction.session.agentSessionID
@@ -547,19 +600,53 @@ final class AppController: ObservableObject {
                 )
             )
             if reduction.didCompleteMainTurn {
-                deliverQueuedReplyIfNeeded(to: reduction.session)
+                scheduleQueuedReplyDeliveryIfNeeded(to: reduction.session)
             }
         }
     }
 
+    private func scheduleQueuedReplyDeliveryIfNeeded(to session: AgentSession) {
+        guard queuedReplies[session.id]?.isEmpty == false else {
+            showCompletionCallout(sessionID: session.id)
+            return
+        }
+        let token = UUID()
+        queuedReplyDeliveryTokens[session.id] = token
+        // This grace period is deliberately short enough to feel immediate,
+        // but long enough for a question/approval hook to supersede Stop.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            guard let self,
+                  self.queuedReplyDeliveryTokens[session.id] == token
+            else {
+                return
+            }
+            self.queuedReplyDeliveryTokens.removeValue(forKey: session.id)
+            guard let current = self.sessionStore.session(id: session.id),
+                  PromptSubmissionPolicy.canDeliverQueuedPrompt(to: current)
+            else {
+                return
+            }
+            self.deliverQueuedReplyIfNeeded(to: current)
+        }
+    }
+
+    private func cancelQueuedReplyDelivery(sessionID: String) {
+        queuedReplyDeliveryTokens.removeValue(forKey: sessionID)
+    }
+
     private func deliverQueuedReplyIfNeeded(to session: AgentSession) {
+        guard let current = sessionStore.session(id: session.id),
+              PromptSubmissionPolicy.canDeliverQueuedPrompt(to: current)
+        else {
+            return
+        }
         guard var queue = queuedReplies[session.id], !queue.isEmpty else {
             showCompletionCallout(sessionID: session.id)
             return
         }
         let reply = queue.removeFirst()
         queuedReplies[session.id] = queue.isEmpty ? nil : queue
-        terminalAutomation.send(text: reply, to: session) { [weak self] result in
+        terminalAutomation.send(text: reply, to: current) { [weak self] result in
             switch result {
             case .success:
                 guard let self else { return }
@@ -571,7 +658,7 @@ final class AppController: ObservableObject {
                 if needsAcknowledgement {
                     self.ensurePromptStarted(
                         sessionID: session.id,
-                        session: session,
+                        session: current,
                         expectedActivity: activity
                     )
                 }
@@ -641,6 +728,9 @@ final class AppController: ObservableObject {
             return
         }
         sessionStore.resolveInteraction(sessionID: sessionID)
+        if calloutSessionID == sessionID {
+            collapsePanel()
+        }
     }
 
     private func agentProcessExited(
@@ -659,6 +749,7 @@ final class AppController: ObservableObject {
             )
         }
         processMonitor.stopWatching(sessionID: sessionID)
+        cancelQueuedReplyDelivery(sessionID: sessionID)
         queuedReplies.removeValue(forKey: sessionID)
         pendingCallouts.remove(sessionID: sessionID)
         pendingCalloutCount = pendingCallouts.count
@@ -794,8 +885,11 @@ final class AppController: ObservableObject {
                     window: self.panelController?.window,
                     to: destination.appendingPathComponent("03-compact-overflow.png")
                 )
+                // Keep the interactive callout in front and a normal
+                // completion behind it. The snapshot then verifies that a
+                // question renders controls instead of a free-form composer.
+                self.showUrgentCallout(sessionID: "codex:visual-codex")
                 self.showCompletionCallout(sessionID: "claude:visual-finished")
-                self.showUrgentCallout(sessionID: "claude:visual-claude")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
                     guard let self else { return }
                     self.capture(

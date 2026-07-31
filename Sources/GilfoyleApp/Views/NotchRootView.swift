@@ -160,43 +160,29 @@ struct NotchRootView: View {
                     Spacer(minLength: 16)
                 }
 
-                if let preview = session.lastResponsePreview,
-                   !preview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    ScrollView(.vertical, showsIndicators: true) {
-                        MarkdownResponseView(markdown: preview)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.trailing, 5)
-                    }
-                    // A short answer still deserves a stable readable area;
-                    // without a minimum, SwiftUI can compress this scroll
-                    // view to a few pixels when the notch changes height.
-                    .frame(height: responsePreviewHeight(for: preview))
-                    .padding(.leading, 44)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                HStack(spacing: 7) {
-                    if session.lastResponsePreview?.isEmpty == false {
-                        quickAction("Copy response", icon: "doc.on.doc") {
-                            controller.copyResponse(sessionID: session.id)
+                if let interaction = session.interaction {
+                    calloutInteraction(interaction, session: session)
+                        .padding(.leading, 44)
+                } else {
+                    if let preview = session.lastResponsePreview,
+                       !preview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        ScrollView(.vertical, showsIndicators: true) {
+                            MarkdownResponseView(markdown: preview)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.trailing, 5)
                         }
+                        // A short answer still deserves a stable readable area;
+                        // without a minimum, SwiftUI can compress this scroll
+                        // view to a few pixels when the notch changes height.
+                        .frame(height: responsePreviewHeight(for: preview))
+                        .padding(.leading, 44)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    quickAction("Open hub", icon: "rectangle.expand.vertical") {
-                        controller.showSessionBoard(focusing: session.id)
-                    }
-                    if controller.pendingCalloutCount > 0 {
-                        Text("+\(controller.pendingCalloutCount) waiting")
-                            .font(.system(size: 10.5, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.72))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 5)
-                            .background(Capsule().fill(Color.white.opacity(0.10)))
-                    }
-                    Spacer(minLength: 0)
-                }
-                .padding(.leading, 44)
 
-                HStack(spacing: 8) {
+                    calloutQuickActions(session: session)
+                        .padding(.leading, 44)
+
+                    HStack(spacing: 8) {
                     ZStack(alignment: .topLeading) {
                         ReplyTextView(
                             text: $calloutReply,
@@ -254,19 +240,20 @@ struct NotchRootView: View {
                     .foregroundStyle(.white.opacity(canSendCalloutReply ? 0.90 : 0.28))
                     .disabled(!canSendCalloutReply)
                     .help("Send reply")
-                }
-                if !calloutAttachments.isEmpty {
-                    HStack(spacing: 6) {
-                        ForEach(calloutAttachments.indices, id: \.self) { index in
-                            attachmentTag(
-                                attachmentLabel(for: calloutAttachments[index], index: index),
-                                icon: attachmentIcon(for: calloutAttachments[index])
-                            ) {
-                                calloutAttachments.remove(at: index)
+                    }
+                    if !calloutAttachments.isEmpty {
+                        HStack(spacing: 6) {
+                            ForEach(calloutAttachments.indices, id: \.self) { index in
+                                attachmentTag(
+                                    attachmentLabel(for: calloutAttachments[index], index: index),
+                                    icon: attachmentIcon(for: calloutAttachments[index])
+                                ) {
+                                    calloutAttachments.remove(at: index)
+                                }
                             }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             .padding(.horizontal, 24)
@@ -289,8 +276,67 @@ struct NotchRootView: View {
         }
         .contentShape(Rectangle())
         .accessibilityLabel(
-            "\(session.agent.displayName) finished in \(session.projectName). Reply or open all sessions."
+            "\(session.agent.displayName), \(calloutSubtitle(for: session))."
         )
+    }
+
+    @ViewBuilder
+    private func calloutInteraction(
+        _ interaction: PendingInteraction,
+        session: AgentSession
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if interaction.kind == .approval {
+                ApprovalInteractionView(
+                    interaction: interaction,
+                    allow: {
+                        controller.allow(interactionID: interaction.id, sessionID: session.id)
+                    },
+                    deny: {
+                        controller.deny(interactionID: interaction.id, sessionID: session.id)
+                    }
+                )
+            } else {
+                QuestionInteractionView(
+                    interaction: interaction,
+                    onBeginEditing: { controller.beginExplicitReply() },
+                    submit: {
+                        controller.answer(
+                            interactionID: interaction.id,
+                            sessionID: session.id,
+                            answers: $0
+                        )
+                    },
+                    cancel: {
+                        controller.cancel(interactionID: interaction.id, sessionID: session.id)
+                    }
+                )
+            }
+            calloutQuickActions(session: session)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func calloutQuickActions(session: AgentSession) -> some View {
+        HStack(spacing: 7) {
+            if session.lastResponsePreview?.isEmpty == false {
+                quickAction("Copy response", icon: "doc.on.doc") {
+                    controller.copyResponse(sessionID: session.id)
+                }
+            }
+            quickAction("Open hub", icon: "rectangle.expand.vertical") {
+                controller.showSessionBoard(focusing: session.id)
+            }
+            if controller.pendingCalloutCount > 0 {
+                Text("+\(controller.pendingCalloutCount) waiting")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.72))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.white.opacity(0.10)))
+            }
+            Spacer(minLength: 0)
+        }
     }
 
     private func calloutTitle(for session: AgentSession) -> String {
